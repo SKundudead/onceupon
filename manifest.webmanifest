@@ -1,0 +1,11 @@
+{
+  "name": "OnceUpon — Where every story finds its reader",
+  "short_name": "OnceUpon",
+  "description": "A community library for readers and writers.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4efe6",
+  "theme_color": "#38271f",
+  "icons": [{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}

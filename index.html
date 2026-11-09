@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#38271f">
+  <meta name="description" content="OnceUpon — Where every story finds its reader.">
+  <title>OnceUpon — Where every story finds its reader</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#home" aria-label="OnceUpon home"><span class="brand-mark">O</span><span><strong>OnceUpon</strong><small>Where every story finds its reader.</small></span></a>
+    <nav id="nav" class="nav" aria-label="Main navigation"></nav>
+    <div class="top-actions"><button id="themeToggle" class="icon-button" aria-label="Toggle theme" title="Toggle theme">◐</button><button id="authButton" class="button button-small">Sign in</button><button id="signOutButton" class="button button-small button-quiet hidden">Sign out</button></div>
+  </header>
+
+  <main id="main" class="main" tabindex="-1">
+    <section class="hero">
+      <div class="hero-copy"><p class="eyebrow">A home for stories</p><h1>Every story deserves<br><em>a place to be found.</em></h1><p class="hero-text">Discover thoughtful fiction, follow authors, and read at your own pace.</p><div class="hero-actions"><button class="button" data-action="browse">Explore the library</button><button class="button button-outline" data-action="signup">Create an account</button></div></div>
+      <div class="hero-art" aria-hidden="true"><div class="book-shape"><span>Once<br>Upon</span><i>✦</i></div><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><span class="hero-star star-a">✦</span><span class="hero-star star-b">✧</span></div>
+    </section>
+    <section class="content-section"><div class="section-heading"><div><p class="eyebrow">The collection</p><h2>Stories to discover</h2></div><label class="search-wrap"><span aria-hidden="true">⌕</span><input id="catalogueSearch" type="search" placeholder="Search titles, genres, tags…" aria-label="Search stories"></label></div><div id="catalogue" class="story-grid"><div class="loading">Loading published stories…</div></div></section>
+  </main>
+
+  <div id="authModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="modal-card auth-card"><button class="modal-close" data-action="close-modal" aria-label="Close">×</button><p class="eyebrow">Welcome to OnceUpon</p><h2 id="authTitle">Sign in</h2><div class="auth-tabs"><button class="auth-tab active" data-auth-mode="login">Sign in</button><button class="auth-tab" data-auth-mode="signup">Create account</button><button class="auth-tab" data-auth-mode="verify">Verify email</button></div>
+      <form id="loginForm" class="auth-form"><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required minlength="8"></label><button class="button button-full" type="submit">Sign in</button><button class="text-button" type="button" data-action="forgot-password">Forgot password?</button></form>
+      <form id="signupForm" class="auth-form hidden"><label>Full name<input name="full_name" autocomplete="name" maxlength="100" required></label><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label><label>Phone <span class="muted">(optional)</span><input name="phone" type="tel" autocomplete="tel"></label><p class="form-note">New accounts must verify their email and receive manual approval before reading.</p><button class="button button-full" type="submit">Create account</button></form>
+      <form id="verifyForm" class="auth-form hidden"><p class="form-note">Enter the six-digit code from your email if your Supabase email template sends OTP codes. If it sends a confirmation link, open that link instead; this page will sign you in automatically.</p><label>Email<input name="email" type="email" required></label><label>Six-digit code<input name="token" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><button class="button button-full" type="submit">Verify email</button><button class="text-button" type="button" data-action="resend-otp">Resend code</button></form>
+      <p id="authMessage" class="message" role="status"></p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <footer class="footer">
+    <div class="brand footer-brand"><span class="brand-mark">O</span><span><strong>OnceUpon</strong><small>Where every story finds its reader.</small></span></div>
+    <p>Made for readers and writers. No paid features or payments are enabled.</p>
+    <section class="footer-contact" aria-label="Contact">
+      <strong>Contact</strong>
+      <p>Connect with us on Instagram: <a href="https://www.instagram.com/dunno__nothing/" target="_blank" rel="noopener noreferrer">@dunno__nothing</a></p>
+    </section>
+    <small>© <span id="year"></span> OnceUpon</small>
+  </footer>
+</body>
+</html>
