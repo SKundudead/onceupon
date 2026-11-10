@@ -3,7 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#38271f">
+  <meta name="theme-color" content="#191a20">
+  <meta name="color-scheme" content="dark light">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <meta name="description" content="OnceUpon — Where every story finds its reader.">
   <title>OnceUpon — Where every story finds its reader</title>
   <link rel="stylesheet" href="styles.css">
@@ -40,13 +44,18 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div class="floating-actions" aria-label="Quick help"><button class="button button-small" data-view="ai">Ask OnceUpon AI</button><a class="button button-small button-outline" href="mailto:onceupon.admin@gmail.com">Contact Admin</a></div>
   <footer class="footer">
     <div class="brand footer-brand"><span class="brand-mark">O</span><span><strong>OnceUpon</strong><small>Where every story finds its reader.</small></span></div>
-    <p>Made for readers and writers. No paid features or payments are enabled.</p>
-    <section class="footer-contact" aria-label="Contact">
-      <strong>Contact</strong>
-      <p>Connect with us on Instagram: <a href="https://www.instagram.com/dunno__nothing/" target="_blank" rel="noopener noreferrer">@dunno__nothing</a></p>
-    </section>
+    <p>A quiet corner of the internet for readers and writers. Always free — no payments or paid features.</p>
+    <div class="footer-grid">
+      <div><strong>Discover</strong><button class="footer-link" data-view="about">About OnceUpon</button><button class="footer-link" data-view="home">Home & stories</button><button class="footer-link" data-view="authors">Authors</button><button class="footer-link" data-view="faq">FAQ</button><button class="footer-link" data-view="legal">Terms, privacy & guidelines</button></div>
+      <div><strong>Your account</strong><button class="footer-link" data-view="account">Profile & settings</button><button class="footer-link" data-view="community">My library</button><button class="footer-link" data-view="notifications">Notifications</button><button class="footer-link" data-view="messages">Author conversations</button></div>
+      <div><strong>Writing</strong><button class="footer-link" data-view="author">Author studio / apply</button><button class="footer-link" data-view="ai">Ask OnceUpon AI</button><button class="footer-link" data-view="guide">User guide</button><button class="footer-link" data-view="help">Contact support</button></div>
+      <div><strong>Get the app</strong><button class="footer-link" data-action="install-app">Install OnceUpon</button><a href="/manifest.webmanifest">App information</a></div>
+    </div>
+    <section class="footer-contact" aria-label="Contact"><strong>Contact OnceUpon</strong><p>Email: <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a></p><p>Instagram: <a href="https://www.instagram.com/dunno__nothing/" target="_blank" rel="noopener noreferrer">@dunno__nothing</a></p></section>
+    <small>Privacy · Community guidelines · Be respectful, protect your personal information and report concerns through Help & feedback.</small>
     <small>© <span id="year"></span> OnceUpon</small>
   </footer>
 </body>

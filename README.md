@@ -1,104 +1,88 @@
-# OnceUpon — complete frontend release package
+# OnceUpon — Midnight Library release
 
-**Tagline:** Where every story finds its reader.
+**Tagline:** Where every story finds its reader.  
+**Design:** Midnight Library — charcoal, antique gold, warm ivory and literary serif typography.
 
-This is the refreshed static frontend package for the existing Supabase project. It uses the confirmed 23-table schema export supplied for this project; it does not create a second database or replace the existing data.
+This release builds on the existing OnceUpon static frontend and Supabase project. It preserves the original authentication, catalogue, reader, token wallet, author studio, quests and administration workflows, and adds the next set of requested features in one integrated package.
 
-## Included
+## Included in this release
 
-- `index.html`, `styles.css`, `app.js` — responsive reader, author, and administration interface.
-- `config.js` — public Supabase URL and publishable-key configuration. The project URL is already filled in; paste the **publishable key** in the placeholder.
-- `FINAL_SUPABASE_PATCH.sql` — compatibility SQL for chapter page metadata, quest submissions and moderation rewards, and approved public reviews. It also updates the new-user trigger to preserve optional phone metadata.
-- `ASSIGN_FIRST_OWNER.sql` — one-time manual first-owner assignment. Run only after registering and verifying your own account.
-- `manifest.webmanifest`, `sw.js`, `icon.svg` — installable PWA shell and static-asset caching. Private story content, account data, token balances, and Supabase API responses are never cached by the service worker.
-- `_redirects`, `netlify.toml` — Netlify static hosting and SPA fallback.
+### Reader and public experience
+- Midnight Library theme as the default, with Warm Paper and device/system theme choices.
+- Responsive navigation, mobile layout, expanded footer, About, FAQ, user guide, privacy/community guidance, support contacts and PWA install prompt.
+- Public story catalogue and author directory with public author profile pages.
+- Dedicated notification centre and in-app toast alerts for newly published stories (polling while the app is open).
+- Reader preferences for font family, text size, line spacing, contrast and reduced motion.
 
-## Features connected to the existing schema
+### Profiles and privacy
+- Edit display name, phone, biography, Instagram URL and profile visibility.
+- Upload a JPG/PNG/WebP profile photo up to 5 MB to the existing private `profile-photos` bucket.
+- Change email through Supabase confirmation and update password through Supabase Auth.
+- Opt-in online presence. When disabled, the public author view does not expose last-seen information.
+- Public author profiles expose only selected public fields; email and phone are not included in the public author view.
 
-### Reader
-- Public published-story catalogue and story/chapter navigation.
-- Page body delivery through `get_story_page`; the browser never queries `story_pages.content` directly.
-- First five story-wide pages free; later pages use the existing `unlock_story_page` RPC and expiring token batches.
-- Token balance/history and daily token claim through existing RPCs.
-- Reading progress, bookmarks, private/public reading lists, moderated reviews and page comments.
-- Notifications, support messages, and reports.
-- Reading preferences: warm-paper/dark theme, text size, line spacing, high contrast; browser-native read-aloud where supported.
+### Author community
+- Follow and unfollow authors.
+- Reader-to-author conversations with message history and close/reopen controls.
+- No ordinary user-to-user private chat.
+- Author application and existing writing studio remain connected to the existing workflow.
 
-### Author
-- Author application and status.
-- Draft story, chapter, and page creation/editing under the existing author RLS policies.
-- Authors submit stories for admin publication review; frontend does not publish stories directly.
+### AI assistant
+- “Ask OnceUpon AI” includes a no-cost, browser-local helper for catalogue discovery, plot brainstorming, character development and writing feedback.
+- It does not call an external language model and does not send prompts to a third party. This is an honest free fallback, not a full generative AI integration.
 
-### Administration
-- Manual account approval/rejection.
-- Author application approval/rejection through `review_author_application`.
-- Story publication/rejection.
-- Quest creation, evidence review, and atomic reward credit through `review_quest_submission`.
-- Comment/review moderation, report resolution, support replies, and owner-only role grants.
+### Administration and recovery
+- Admin analytics for members, published/pending stories, author follows and author conversations.
+- Published catalogue CSV export.
+- Full database backup is intentionally directed to the export/backup method supported by your Supabase plan; automated backup availability depends on the plan. A browser-only frontend cannot safely produce a full database dump or restore the entire Supabase project. Private story pages, auth secrets and private files are never included in the CSV export.
+- Existing account, author, story, quest, moderation, report and support administration is retained.
 
-## Important limitations and honest status
+## Supabase setup — important
 
-- This package is code-complete against the schema and RPC names documented in the project handover, but it has **not** been live-tested against your Supabase account or deployed Netlify site from this workspace.
-- Supabase email delivery is controlled by your Auth email provider/template. The UI supports a six-digit email OTP if your Supabase template sends one; if your template sends a confirmation link, use that link. Do not assume delivery is configured until you test an actual signup.
-- The PWA caches only the static app shell. It is not an offline reader and does not cache protected pages.
-- Private `story-files` downloads are not exposed in this frontend. Keep that bucket private; do not make it public or add a service-role key to the browser. A secure Edge Function/signed-URL workflow would need to be deployed separately before using private story-file downloads.
-- No payment, paid AI API, paid domain, or service-role key is used. Netlify's free `*.netlify.app` subdomain is sufficient.
-- Supabase Free and Netlify Free have usage limits and service availability conditions. The project remains ₹0 only while usage stays within free-tier limits.
+The new profile, follow, author-conversation, public-author-view and publication-notification features require the included migration.
 
-## Deployment — Android-friendly
+1. Open your Supabase project: `https://supabase.com/dashboard/project/trnsnbvvxgrscbcigpqe`.
+2. In **SQL Editor**, run `FINAL_SUPABASE_PATCH.sql` first if it has not already been applied.
+3. Run `IMPLEMENTATION_MIGRATION.sql` once. It adds the profile fields, RLS-protected follow and conversation tables, restricted public author view, private-photo read policy for opted-in public author avatars, and the publication-notification trigger.
+4. Confirm the `profile-photos` storage bucket exists and remains **private**, with a 5 MB limit and JPEG/PNG/WebP MIME types. Preserve the existing own-user-folder upload policies.
+5. Do not disable RLS. Do not add a service-role key to frontend files.
 
-### 1. Apply the SQL patch
-1. Open the Supabase SQL Editor for project `trnsnbvvxgrscbcigpqe`.
-2. Open `FINAL_SUPABASE_PATCH.sql` from this folder.
-3. Copy the entire file into a new SQL query and run it once.
-4. Confirm Supabase reports success. If it reports an error, stop and share the exact error; do not repeatedly run edited fragments.
+The migration is designed to be re-runnable. It does not assign an Owner role and does not change existing story or token data. It assumes the project's existing helper functions (`has_admin_role()` and `is_approved_reader()`) from the previously established schema are present.
 
-The patch is designed to be safe to re-run, but run it once first and keep a copy of the result.
+## Frontend configuration
 
-### 2. Set the public frontend key
-1. Open `config.js`.
-2. Keep the existing Supabase URL.
-3. Replace `PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY_HERE` with the project's **publishable key** (or legacy anon key, if that is what the project dashboard provides).
-4. Do not use a `service_role` key, database password, or secret key.
+Open `config.js` and replace `PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY_HERE` with the project's **publishable** key (or legacy anon key). Keep the existing Supabase URL. Never use a service-role key, secret key or database password in browser code.
 
-### 3. Upload to GitHub
-1. Open `https://github.com/SKundudead/onceupon` in Chrome.
-2. Upload the contents of this folder to the repository root (not the ZIP file itself).
-3. Ensure `index.html`, `app.js`, `styles.css`, `config.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `netlify.toml`, and `_redirects` are at the root.
-4. Commit the files to the main branch.
+## Deploy
 
-### 4. Deploy on Netlify
-1. Open Netlify and choose **Add new site → Import an existing project**.
-2. Connect GitHub if Netlify asks, then select `SKundudead/onceupon`.
-3. Use the main branch, leave the build command blank, and set publish directory to `.`.
-4. Deploy. Netlify will provide a free `*.netlify.app` address.
+1. Upload the contents of this folder to the root of `https://github.com/SKundudead/onceupon`.
+2. Keep the Netlify site connected to that repository and deploy the main branch with no build command and publish directory `.`.
+3. Open the deployed site, sign in and test the features below before announcing it publicly.
 
-### 5. Create and assign the first Owner
-1. Open your deployed site and register using your own email.
-2. Complete Supabase email verification. Check spam and the Auth email configuration if no message arrives.
-3. In Supabase SQL Editor, open `ASSIGN_FIRST_OWNER.sql`.
-4. Replace `YOUR_VERIFIED_EMAIL_HERE` with the exact email used for the verified account; run it once.
-5. Sign out and sign in again. The Administration section should appear.
-6. In Administration, approve your own profile. Then approve other test accounts as needed.
+## End-to-end test checklist
 
-Never make a public Owner-creation RPC and never grant Owner from the browser.
+- Register, verify email and approve a test account.
+- Edit profile details, upload an avatar, change password and test email-change confirmation.
+- Enable and disable online visibility; verify that hidden presence is not shown publicly.
+- Assign author role, publish a public author profile and test follow/unfollow.
+- Start a reader-to-author conversation; reply as the author; close and reopen it.
+- Publish a story and verify a notification is inserted for approved readers and appears in the notification centre/toast while the app is open.
+- Test catalogue discovery, reading, first-five-pages-free behavior, page unlocks, bookmarks, lists, token claims and quests.
+- Test dark/light/system themes, font, spacing, contrast, reduced motion and PWA installation.
+- Verify admin analytics and catalogue CSV export.
 
-## First end-to-end test
+## Honest limitations
 
-Use a separate test reader account after the Owner is ready:
-1. Register and verify the test account.
-2. Approve it in Administration.
-3. Create a small test quest and submit a response; approve it and confirm the reward appears in the token wallet.
-4. Apply for author access from the account's author area; approve the application.
-5. Create a draft story with one chapter and at least six pages; submit it for review and publish it from Administration.
-6. Read the first five pages, then test a later page with a token cost.
-7. Test bookmarks, a reading list, a review, a comment, a report, and a support message.
-
-If a feature fails, capture the exact on-screen error and the relevant Supabase error. Do not disable RLS to make the interface work.
+- This workspace cannot access your live Supabase dashboard or Netlify deployment, so database migration success, storage policies, email delivery, RLS behavior and production runtime have not been live-tested here.
+- The AI assistant is a local rules-based fallback, not a hosted LLM.
+- Publication and author-message notifications use database triggers, in-app notifications and periodic polling while the site is open. Browser push notifications while the app is closed are not configured.
+- Backup instructions and catalogue CSV export are included; full database backup/restore must be performed through Supabase's supported dashboard/backup facilities.
+- PWA installation availability depends on the browser and deployment being served over HTTPS.
+- No payments, subscriptions, paid APIs or service-role keys are included.
 
 ## Security reminders
 
-- Keep RLS enabled on every app table.
-- Keep `profile-photos`, `quest-submissions`, and `story-files` private; `story-covers` may remain public.
-- The service-role key and database password must never appear in `config.js`, GitHub, Netlify environment variables exposed to client code, or browser source.
-- Client-side controls are not security boundaries. Supabase RLS and SECURITY DEFINER RPC checks are the authority.
+- Keep RLS enabled on all Supabase tables.
+- Keep `profile-photos`, `quest-submissions` and `story-files` private; `story-covers` may remain public.
+- Public author profiles are exposed through the restricted `public_author_profiles` view, not by making the full `profiles` table public.
+- Do not share OTPs, passwords, API secrets or database credentials.

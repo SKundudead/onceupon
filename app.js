@@ -23,6 +23,11 @@
   let authorStories = [];
   let adminProfiles = [];
   let toastTimer = null;
+  let activeThreadId = null;
+  let presenceTimer = null;
+  let deferredInstallPrompt = null;
+  let notificationPollTimer = null;
+  let lastSeenNotificationAt = null;
 
   const main = $("#main");
   const toastNode = $("#toast");
@@ -59,11 +64,11 @@
 
   function updateChrome() {
     const nav = $("#nav");
-    const links = [{id:"home",label:"Library"}];
-    if (session && isApproved()) { links.push({id:"wallet",label:"My tokens"},{id:"quests",label:"Quests"},{id:"community",label:"My library"},{id:"help",label:"Help & feedback"}); }
-    if (session && isApproved() && roleIsAuthor()) links.push({id:"author",label:"Author studio"});
+    const links = [{id:"home",label:"Library"},{id:"authors",label:"Authors"},{id:"ai",label:"Ask AI"},{id:"faq",label:"FAQ"}];
+    if (session && isApproved()) { links.push({id:"wallet",label:"My tokens"},{id:"quests",label:"Quests"},{id:"community",label:"My library"},{id:"notifications",label:"Notifications"},{id:"help",label:"Help & feedback"}); }
+    if (session && isApproved()) links.push({id:"author",label:"Write"});
     if (session && roleIsAdmin()) links.push({id:"admin",label:"Administration"});
-    if (session) links.push({id:"account",label:"Account"});
+    if (session) links.push({id:"messages",label:"Messages"},{id:"account",label:"Profile"});
     nav.innerHTML = links.map(item => `<button data-view="${item.id}" class="${activeView===item.id?"active":""}">${item.label}</button>`).join("");
     $("#authButton").classList.toggle("hidden", Boolean(session));
     $("#signOutButton").classList.toggle("hidden", !session);
@@ -390,12 +395,15 @@
       $("#adminPane").innerHTML = `<div class="panel"><h3>Account approvals</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>User / UID</th><th>Status</th><th>Action</th></tr></thead><tbody>${userRows||`<tr><td colspan="3">No profiles found.</td></tr>`}</tbody></table></div></div>
         <div class="panel"><h3>Author applications awaiting review</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>Applicant / biography</th><th>Submitted</th><th>Admin note</th><th>Decision</th></tr></thead><tbody>${appRows||`<tr><td colspan="4">No pending applications.</td></tr>`}</tbody></table></div></div>
         <div class="panel"><h3>Stories awaiting publication review</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>Story</th><th>Author UID</th><th>Decision</th></tr></thead><tbody>${storyRows||`<tr><td colspan="3">No stories awaiting review.</td></tr>`}</tbody></table></div></div>
+        <div class="panel"><h3>Platform analytics</h3><div id="adminAnalytics" class="loading">Preparing analytics…</div></div>
+        <div class="panel"><h3>Backup & recovery</h3><p>For a full database backup, use the database export/backup method supported by your Supabase plan. Automated backup availability depends on your plan. This application cannot safely create a full database dump from a browser session. You can export published catalogue metadata below.</p><button class="button button-outline button-xs" data-action="export-catalogue">Export catalogue CSV</button><p class="form-note">Private story pages, authentication secrets and private files are intentionally excluded.</p></div>
         ${roles.includes("owner")?`<div class="panel"><h3>Owner role management</h3><p class="muted">Use the profile UID from the account list. Only the Owner can manage roles.</p><form id="roleForm" class="form-grid"><label class="field">User UID<input name="user_id" required></label><label class="field">Role<select name="role"><option value="admin">Admin</option><option value="author">Author</option><option value="reader">Reader</option></select></label><div class="form-actions" style="grid-column:1/-1"><button class="button" type="submit">Grant role</button></div></form></div>`:""}
         <div class="panel"><h3>Quest management</h3><form id="questForm" class="form-grid"><label class="field">Title<input name="title" required maxlength="160"></label><label class="field">Reward tokens<input name="reward_tokens" type="number" min="0" max="100000" value="0"></label><label class="field">Starts at<input name="starts_at" type="datetime-local"></label><label class="field">Deadline<input name="deadline" type="datetime-local"></label><label class="field">Maximum completions (optional)<input name="max_completions" type="number" min="1"></label><label class="field" style="grid-column:1/-1">Instructions<textarea name="instructions" required maxlength="5000"></textarea></label><div class="form-actions"><button class="button">Create active quest</button></div></form></div>
         <div class="panel"><h3>Quest submissions</h3><div id="adminQuestRows" class="loading">Loading submissions…</div></div>
         <div class="panel"><h3>Moderate comments & reviews</h3><div id="adminModerationRows" class="loading">Loading moderation queue…</div></div>
         <div class="panel"><h3>Reports & support</h3><div id="adminHelpRows" class="loading">Loading reports and support messages…</div></div>`;
       loadAdminExtras();
+      loadAdminAnalytics();
     } catch (error) { $("#adminPane").innerHTML = `<div class="notice danger-note">${esc(niceError(error))}<br>Confirm that this account has an admin or owner role and that the admin RLS policies are enabled.</div>`; }
   }
 
@@ -443,32 +451,34 @@
     } catch (error) { toast(niceError(error),5000); }
   }
 
-  function renderAccountView() {
+  async function renderAccountView() {
     const p = profile || {};
-    main.innerHTML = `<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your OnceUpon account</p><h2>Account & reading preferences</h2></div>
-      <div class="panel"><h3>Account status</h3><div class="stat-row"><div class="stat"><strong>${esc(p.approval_status||"pending")}</strong><span>Approval status</span></div><div class="stat"><strong>${roles.map(esc).join(", ")||"reader"}</strong><span>Account roles</span></div><div class="stat"><strong>${session?.user?.email_confirmed_at?"Verified":"Pending"}</strong><span>Email verification</span></div></div><p class="muted">Email: ${esc(session?.user?.email||"")}<br>User ID: <span class="mono">${esc(userId()||"")}</span></p></div>
-      <div class="panel"><h3>Reading preferences</h3><div class="form-grid"><label class="field">Theme<select id="prefTheme"><option value="light">Warm paper</option><option value="dark">Dark</option></select></label><label class="field">Text size<select id="prefFont"><option value="16">Small</option><option value="18">Regular</option><option value="20">Large</option><option value="22">Extra large</option></select></label><label class="field">Line spacing<select id="prefLine"><option value="1.6">Compact</option><option value="1.8">Comfortable</option><option value="2">Spacious</option></select></label><label class="field">Contrast<select id="prefContrast"><option value="normal">Normal</option><option value="high">High contrast</option></select></label></div><div class="form-actions"><button class="button" data-action="save-preferences">Save preferences</button></div></div>
-      <div class="notice">Your email and account details are managed by Supabase Authentication. Approval status and roles cannot be changed by a reader from this screen.</div></section>`;
-    const prefs = readPrefs();
-    $("#prefTheme").value = prefs.theme;
-    $("#prefFont").value = String(prefs.font);
-    $("#prefLine").value = String(prefs.line);
-    $("#prefContrast").value = prefs.contrast;
+
+    main.innerHTML = `<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your OnceUpon identity</p><h2>Profile & settings</h2><p>Manage your public author presence, privacy and reading experience.</p></div>
+      <div class="panel"><div class="profile-header"><img id="profileAvatar" class="avatar" alt="Profile photo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect width='100%25' height='100%25' fill='%2330313c'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' font-size='40' fill='%23d7c19a'%3E${esc((p.full_name||"U").slice(0,1).toUpperCase())}%3C/text%3E%3C/svg%3E"><div><h3>${esc(p.full_name||"Your profile")}</h3><p class="muted">${esc(session?.user?.email||"")}</p><span class="tag">${esc(p.approval_status||"pending")} · ${roles.map(esc).join(", ")||"reader"}</span></div></div>
+      <form id="profileForm" class="form-grid" style="margin-top:18px"><label class="field">Display name<input name="full_name" maxlength="100" required value="${esc(p.full_name||"")}"></label><label class="field">Phone (optional)<input name="phone" type="tel" maxlength="40" value="${esc(p.phone||"")}"></label><label class="field">Profile photo (JPG, PNG or WebP; max 5 MB)<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp"></label><label class="field" style="grid-column:1/-1">Bio<textarea name="bio" maxlength="1200" placeholder="Tell readers a little about yourself…">${esc(p.bio||"")}</textarea></label><label class="field">Instagram profile URL<input name="instagram_url" type="url" placeholder="https://www.instagram.com/username/" value="${esc(p.instagram_url||"")}"></label><label class="field">Profile visibility<select name="is_profile_public"><option value="true" ${p.is_profile_public!==false?"selected":""}>Public</option><option value="false" ${p.is_profile_public===false?"selected":""}>Private</option></select></label><label class="field">Online visibility<select name="online_visible"><option value="false" ${!p.online_visible?"selected":""}>Hidden</option><option value="true" ${p.online_visible?"selected":""}>Show when I'm active</option></select></label><div class="form-actions" style="grid-column:1/-1"><button class="button" type="submit">Save profile</button></div></form></div>
+      <div class="panel"><h3>Account security</h3><p class="muted">Email changes require confirmation from Supabase. Use a strong, unique password.</p><form id="emailForm" class="form-grid"><label class="field">New email<input name="email" type="email" required value="${esc(session?.user?.email||"")}"></label><div class="form-actions"><button class="button button-outline" type="submit">Update email</button></div></form><form id="passwordForm" class="form-grid"><label class="field">New password<input name="password" type="password" minlength="8" autocomplete="new-password" required></label><div class="form-actions"><button class="button button-outline" type="submit">Change password</button></div></form></div>
+      <div class="panel"><h3>Reading preferences</h3><div class="form-grid"><label class="field">Theme<select id="prefTheme"><option value="dark">Midnight Library</option><option value="light">Warm paper</option><option value="system">Use device setting</option></select></label><label class="field">Reading font<select id="prefFamily"><option value="serif">Literary serif</option><option value="sans">Modern sans-serif</option></select></label><label class="field">Text size<select id="prefFont"><option value="16">Small</option><option value="18">Regular</option><option value="20">Large</option><option value="22">Extra large</option></select></label><label class="field">Line spacing<select id="prefLine"><option value="1.6">Compact</option><option value="1.8">Comfortable</option><option value="2">Spacious</option></select></label><label class="field">Contrast<select id="prefContrast"><option value="normal">Normal</option><option value="high">High contrast</option></select></label><label class="field">Motion<select id="prefMotion"><option value="normal">Allow motion</option><option value="reduced">Reduce motion</option></select></label></div><div class="form-actions"><button class="button" data-action="save-preferences">Save preferences</button></div></div>
+      <div class="notice">Approval status and account roles are managed by the OnceUpon administration team, not by profile settings.</div></section>`;
+    const prefs=readPrefs();$("#prefTheme").value=prefs.theme;$("#prefFamily").value=prefs.family||"serif";$("#prefFont").value=String(prefs.font);$("#prefLine").value=String(prefs.line);$("#prefContrast").value=prefs.contrast;$("#prefMotion").value=prefs.motion||"normal";
+    if(p.avatar_path){const url=await signedAvatar(p.avatar_path);if(url&&$("#profileAvatar"))$("#profileAvatar").src=url;}
   }
 
   function readPrefs() {
-    try { return {...{theme:"light",font:18,line:1.8,contrast:"normal"},...JSON.parse(localStorage.getItem("onceupon-prefs")||"{}")} }
-    catch { return {theme:"light",font:18,line:1.8,contrast:"normal"}; }
+    try { return {...{theme:"dark",font:18,line:1.8,contrast:"normal",family:"serif",motion:"normal"},...JSON.parse(localStorage.getItem("onceupon-prefs")||"{}")} }
+    catch { return {theme:"dark",font:18,line:1.8,contrast:"normal",family:"serif",motion:"normal"}; }
   }
   function applyReadingPrefs() {
     const prefs = readPrefs();
     const text = $("#readerText");
-    if (text) { text.style.fontSize = `${prefs.font}px`; text.style.lineHeight = prefs.line; }
+    if (text) { text.style.fontSize = `${prefs.font}px`; text.style.lineHeight = prefs.line; text.style.fontFamily = prefs.family === "sans" ? "Inter, sans-serif" : "Cormorant Garamond, Georgia, serif"; }
   }
   function savePrefs() {
-    const prefs = {theme:$("#prefTheme").value,font:Number($("#prefFont").value),line:Number($("#prefLine").value),contrast:$("#prefContrast").value};
+    const prefs = {theme:$("#prefTheme").value,font:Number($("#prefFont").value),line:Number($("#prefLine").value),contrast:$("#prefContrast").value,family:$("#prefFamily")?.value||"serif",motion:$("#prefMotion")?.value||"normal"};
     localStorage.setItem("onceupon-prefs",JSON.stringify(prefs));
     document.body.classList.toggle("theme-dark",prefs.theme==="dark");
+    document.body.classList.toggle("theme-light",prefs.theme==="light"||(prefs.theme==="system"&&window.matchMedia?.("(prefers-color-scheme: light)").matches));
+    document.documentElement.style.setProperty("--reader-motion",prefs.motion==="reduced"?"0":"1");document.body.classList.toggle("reduce-motion",prefs.motion==="reduced");
     document.body.classList.toggle("high-contrast",prefs.contrast==="high");
     toast("Reading preferences saved on this device.");
   }
@@ -477,25 +487,35 @@
     if (!session) { profile=null;roles=[];updateChrome();renderHome();return; }
     try {
       const [{data:profileData,error:profileError},{data:roleData,error:roleError}] = await Promise.all([
-        supa.from("profiles").select("id,full_name,phone,approval_status,created_at,updated_at").eq("id",userId()).maybeSingle(),
+        supa.from("profiles").select("id,full_name,phone,bio,instagram_url,avatar_path,is_profile_public,online_visible,last_seen_at,approval_status,created_at,updated_at").eq("id",userId()).maybeSingle(),
         supa.from("user_roles").select("role").eq("user_id",userId())
       ]);
       if (profileError) throw profileError;
       if (roleError) throw roleError;
       profile = profileData;
+      syncPresence();
       roles = (roleData||[]).map(r=>r.role);
       updateChrome();
       if (isApproved()) {
         try { await rpc("claim_daily_tokens"); } catch (error) { console.info("Daily claim not made:", error.message); }
       }
       if (activeView === "admin" && roleIsAdmin()) await renderAdminView();
-      else if (activeView === "author" && roleIsAuthor() && isApproved()) await renderAuthorView();
+      else if (activeView === "author" && isApproved()) await renderAuthorView();
       else if (activeView === "wallet" && isApproved()) await renderWalletView();
       else if (activeView === "quests" && isApproved()) await renderQuestView();
       else if (activeView === "community" && isApproved()) await renderCommunityView();
+      else if (activeView === "notifications" && isApproved()) await renderNotificationsView();
       else if (activeView === "help" && session) await renderHelpView();
       else if (activeView === "account") renderAccountView();
       else if (activeView === "reader" && currentStory) await openStory(currentStory.story_id);
+      else if (activeView === "authors") await renderAuthorsView();
+      else if (activeView === "author-profile" && window.__onceuponAuthorId) await renderAuthorProfileView(window.__onceuponAuthorId);
+      else if (activeView === "messages") await renderMessagesView();
+      else if (activeView === "ai") renderAIView();
+      else if (activeView === "faq") renderFAQView();
+      else if (activeView === "about") renderAboutView();
+      else if (activeView === "guide") renderGuideView();
+      else if (activeView === "legal") renderLegalView();
       else renderHome();
     } catch (error) {
       console.error("Account load:",error);
@@ -563,6 +583,7 @@
   }
 
   async function signOut() {
+    if(presenceTimer)clearInterval(presenceTimer);presenceTimer=null;if(notificationPollTimer)clearInterval(notificationPollTimer);notificationPollTimer=null;
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     try { const {error} = await supa.auth.signOut(); if (error) throw error; }
     catch (error) { toast(niceError(error)); }
@@ -570,6 +591,11 @@
   }
 
   function setView(view) {
+    const privateViews=["wallet","quests","community","notifications","help","account","messages"];
+    if(privateViews.includes(view)&&!session){setAuthMode("login");return;}
+    if(["wallet","quests","community","notifications"].includes(view)&&!isApproved()){toast("This area is available after account approval.");return;}
+    if(view==="admin"&&!roleIsAdmin()){toast("Administrator access is required.");return;}
+    if(view==="author"&&(!session||!isApproved())){if(!session)setAuthMode("login");else toast("An approved account is required to apply as an author.");return;}
     activeView = view;
     updateChrome();
     if (view === "home") renderHome();
@@ -579,7 +605,16 @@
     else if (view === "account") renderAccountView();
     else if (view === "quests") renderQuestView();
     else if (view === "community") renderCommunityView();
+    else if (view === "notifications") renderNotificationsView();
+    else if (view === "guide") renderGuideView();
+    else if (view === "legal") renderLegalView();
+    else if (view === "about") renderAboutView();
     else if (view === "help") renderHelpView();
+    else if (view === "authors") renderAuthorsView();
+    else if (view === "author-profile") renderAuthorProfileView(window.__onceuponAuthorId);
+    else if (view === "messages") renderMessagesView();
+    else if (view === "ai") renderAIView();
+    else if (view === "faq") renderFAQView();
   }
 
   // Feature-complete user workspaces mapped to the confirmed public schema.
@@ -604,7 +639,7 @@
   async function toggleBookmark(storyId){try{const {data,error}=await supa.from("bookmarks").select("id").eq("user_id",userId()).eq("story_id",storyId).maybeSingle();if(error)throw error;if(data){const d=await supa.from("bookmarks").delete().eq("id",data.id);if(d.error)throw d.error;toast("Bookmark removed.");}else{const a=await supa.from("bookmarks").insert({user_id:userId(),story_id:storyId});if(a.error)throw a.error;toast("Story bookmarked.");}if(activeView==="community")await renderCommunityView();}catch(e){toast(niceError(e),5000);}}
   async function createReadingList(form){try{const f=new FormData(form),{error}=await supa.from("reading_lists").insert({user_id:userId(),title:String(f.get("title")).trim(),is_public:f.get("is_public")==="true"});if(error)throw error;toast("Reading list created.");await renderCommunityView();}catch(e){toast(niceError(e),5000);}}
   async function addToList(listId){if(!currentStory)return toast("Open a story first, then add it to a list.");try{const {error}=await supa.from("reading_list_items").upsert({list_id:listId,story_id:currentStory.story_id},{onConflict:"list_id,story_id"});if(error)throw error;toast("Story added to reading list.");}catch(e){toast(niceError(e),5000);}}
-  async function markNotification(id){const {error}=await supa.from("notifications").update({is_read:true}).eq("id",id).eq("user_id",userId());if(error)toast(niceError(error));else await renderCommunityView();}
+  async function markNotification(id){const {error}=await supa.from("notifications").update({is_read:true}).eq("id",id).eq("user_id",userId());if(error)toast(niceError(error));else if(activeView==="notifications")await renderNotificationsView();else await renderCommunityView();}
   async function renderHelpView(){main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">We're listening</p><h2>Help & feedback</h2></div><div class="panel"><h3>Contact support</h3><form id="supportForm" class="form-stack"><label class="field">Subject<input name="subject" maxlength="160" required></label><label class="field">Message<textarea name="message" maxlength="5000" required></textarea></label><button class="button">Send message</button></form></div><div class="panel"><h3>Report a concern</h3><form id="reportForm" class="form-stack"><label class="field">Target type<select name="target_type"><option value="story">Story</option><option value="comment">Comment</option><option value="review">Review</option><option value="user">User</option></select></label><label class="field">Target ID<input name="target_id" required></label><label class="field">Reason<input name="reason" maxlength="160" required></label><label class="field">Details<textarea name="details" maxlength="3000"></textarea></label><button class="button">Submit report</button></form></div></section>`;}
   async function sendSupport(form){try{const f=new FormData(form),{error}=await supa.from("support_messages").insert({user_id:userId(),subject:String(f.get("subject")).trim(),message:String(f.get("message")).trim()});if(error)throw error;toast("Support message sent.");form.reset();}catch(e){toast(niceError(e),5000);}}
   async function sendReport(form){try{const f=new FormData(form),{error}=await supa.from("reports").insert({reporter_id:userId(),target_type:String(f.get("target_type")),target_id:String(f.get("target_id")).trim(),reason:String(f.get("reason")).trim(),details:String(f.get("details")||"").trim()});if(error)throw error;toast("Report submitted for review.");form.reset();}catch(e){toast(niceError(e),5000);}}
@@ -613,6 +648,32 @@
   async function moderateContent(table,id,status){try{const {error}=await supa.from(table).update({moderation_status:status}).eq("id",id);if(error)throw error;toast(`${table} marked ${status}.`);await renderAdminView();}catch(e){toast(niceError(e),5000);}}
   async function resolveReport(id){try{const {error}=await supa.from("reports").update({status:"resolved",resolved_by:userId(),resolved_at:new Date().toISOString()}).eq("id",id);if(error)throw error;toast("Report resolved.");await renderAdminView();}catch(e){toast(niceError(e),5000);}}
   async function replySupport(id){try{const reply=$("#reply-"+CSS.escape(id))?.value||"";if(!reply.trim())return toast("Enter a reply first.");const {error}=await supa.from("support_messages").update({admin_reply:reply.trim(),status:"replied",replied_by:userId(),replied_at:new Date().toISOString()}).eq("id",id);if(error)throw error;toast("Support reply sent.");await renderAdminView();}catch(e){toast(niceError(e),5000);}}
+
+  async function startNotificationPolling(){if(notificationPollTimer||!session)return;try{const {data}=await supa.from("notifications").select("created_at").eq("user_id",userId()).order("created_at",{ascending:false}).limit(1);if(lastSeenNotificationAt===null&&data?.[0])lastSeenNotificationAt=new Date(data[0].created_at).getTime();}catch{}notificationPollTimer=setInterval(async()=>{try{const {data,error}=await supa.from("notifications").select("id,title,message,created_at").eq("user_id",userId()).eq("is_read",false).order("created_at",{ascending:false}).limit(5);if(error)throw error;const newest=(data||[])[0];if(newest){const stamp=new Date(newest.created_at).getTime();if(lastSeenNotificationAt===null)lastSeenNotificationAt=stamp;else if(stamp>lastSeenNotificationAt){lastSeenNotificationAt=stamp;toast(`${newest.title}: ${newest.message}`,6000);}}}catch(e){console.info("Notification check skipped",e.message);}},60000);}
+  async function signedAvatar(path){if(!path||!supa)return "";try{const {data,error}=await supa.storage.from("profile-photos").createSignedUrl(path,300);if(error)throw error;return data?.signedUrl||"";}catch{return "";}}
+  async function renderAuthorsView(){activeView="authors";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Meet the storytellers</p><h2>Authors</h2><p>Discover the voices behind the stories and follow the writers you enjoy.</p></div><div id="authorsHost" class="story-grid"><div class="loading">Loading authors…</div></div></section>`;try{const {data,error}=await supa.from("public_author_profiles").select("id,full_name,bio,instagram_url,avatar_path,online_visible,is_online,last_seen_at,follower_count,published_story_count").order("full_name");if(error)throw error;const rows=await Promise.all((data||[]).map(async a=>({a,avatar:await signedAvatar(a.avatar_path)})));$("#authorsHost").innerHTML=rows.map(({a,avatar})=>`<article class="panel author-card">${avatar?`<img class="avatar" alt="${esc(a.full_name||"Author")}" src="${esc(avatar)}">`:`<div class="avatar" aria-label="Author initials">${esc((a.full_name||"A").slice(0,1).toUpperCase())}</div>`}<div><h3>${esc(a.full_name||"OnceUpon Author")}</h3><p>${esc(a.bio||"A OnceUpon storyteller.").slice(0,220)}</p><small class="muted">${Number(a.published_story_count)} published stories · ${Number(a.follower_count)} followers ${a.is_online?"· Online":""}</small><p><button class="button button-outline button-xs" data-open-author="${esc(a.id)}">View profile</button></p></div></article>`).join("")||`<div class="empty-state">No public author profiles are available yet.</div>`;}catch(e){$("#authorsHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}<p>Run IMPLEMENTATION_MIGRATION.sql in Supabase before using author discovery.</p></div>`;}}
+  async function renderAuthorProfileView(authorId){if(!authorId)return renderAuthorsView();activeView="author-profile";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="loading">Loading author profile…</div></section>`;try{const [{data:a,error},{data:stories,error:storyErr}]=await Promise.all([supa.from("public_author_profiles").select("id,full_name,bio,instagram_url,avatar_path,online_visible,is_online,last_seen_at,follower_count,published_story_count").eq("id",authorId).maybeSingle(),supa.from("stories").select("id,title,synopsis,genre,cover_path,published_at").eq("author_id",authorId).eq("status","published").order("published_at",{ascending:false})]);if(error)throw error;if(storyErr)throw storyErr;if(!a)throw new Error("This author profile is unavailable or private.");const avatar=await signedAvatar(a.avatar_path);let following=false;if(session){const f=await supa.from("author_follows").select("id").eq("follower_id",userId()).eq("author_id",authorId).maybeSingle();if(!f.error)following=!!f.data;}main.innerHTML=`<section class="page-wrap"><button class="text-button" data-view="authors">← All authors</button><div class="panel"><div class="profile-header">${avatar?`<img class="avatar" alt="${esc(a.full_name)}" src="${esc(avatar)}">`:`<div class="avatar" aria-label="Author initials">${esc((a.full_name||"A").slice(0,1).toUpperCase())}</div>`}<div><p class="eyebrow">OnceUpon author</p><h2>${esc(a.full_name||"Author")}</h2><p class="muted">${Number(a.follower_count)} followers · ${Number(a.published_story_count)} stories ${a.is_online?"· Online":""}</p>${a.instagram_url?`<a href="${esc(a.instagram_url)}" target="_blank" rel="noopener noreferrer">Instagram profile</a>`:""}</div></div><p>${esc(a.bio||"This author hasn't added a biography yet.")}</p><div class="form-actions">${session&&userId()!==authorId?`<button class="button" data-action="toggle-follow" data-author-id="${esc(authorId)}">${following?"Unfollow":"Follow author"}</button><button class="button button-outline" data-action="start-author-thread" data-author-id="${esc(authorId)}">Contact author</button>`:!session?`<button class="button" data-action="signup">Create an account to follow</button>`:""}</div></div><div class="page-heading"><h2>Published stories</h2></div><div class="story-grid">${(stories||[]).map(st=>storyCard({...st,story_id:st.id})).join("")||`<div class="empty-state">This author hasn't published a story yet.</div>`}</div></section>`;}catch(e){main.innerHTML=`<section class="page-wrap"><div class="notice danger-note">${esc(niceError(e))}</div></section>`;}}
+  async function toggleAuthorFollow(authorId){if(!session)return setAuthMode("login");try{const q=await supa.from("author_follows").select("id").eq("follower_id",userId()).eq("author_id",authorId).maybeSingle();if(q.error)throw q.error;if(q.data){const d=await supa.from("author_follows").delete().eq("id",q.data.id);if(d.error)throw d.error;toast("You unfollowed this author.");}else{const d=await supa.from("author_follows").insert({follower_id:userId(),author_id:authorId});if(d.error)throw d.error;toast("You are now following this author.");}await renderAuthorProfileView(authorId);}catch(e){toast(niceError(e),5000);}}
+  async function syncPresence(){if(!session||!supa||!profile)return;startNotificationPolling();if(presenceTimer)clearInterval(presenceTimer);const send=async()=>{try{await supa.from("profiles").update({last_seen_at:new Date().toISOString()}).eq("id",userId()).eq("online_visible",true);}catch(e){console.info("Presence not updated",e.message);}};if(profile.online_visible){await send();presenceTimer=setInterval(send,180000);}else{await supa.from("profiles").update({last_seen_at:null}).eq("id",userId()).then(()=>{}).catch(()=>{});}}
+  async function saveProfile(form){try{const f=new FormData(form||$("#profileForm"));const full_name=String(f.get("full_name")||"").trim();if(!full_name)throw new Error("Enter a display name.");let avatar_path=profile?.avatar_path||null;const file=f.get("avatar");if(file&&file.size){if(file.size>5*1024*1024)throw new Error("Profile photo must be 5 MB or smaller.");if(!["image/jpeg","image/png","image/webp"].includes(file.type))throw new Error("Use a JPG, PNG or WebP image.");const ext=file.type.split("/")[1].replace("jpeg","jpg"),path=`${userId()}/${crypto.randomUUID()}.${ext}`;const up=await supa.storage.from("profile-photos").upload(path,file,{upsert:false,contentType:file.type});if(up.error)throw up.error;avatar_path=path;}const instagram=String(f.get("instagram_url")||"").trim();if(instagram&&!/^https:\/\/(www\.)?instagram\.com\//i.test(instagram))throw new Error("Enter a valid HTTPS Instagram profile URL.");const {error}=await supa.from("profiles").update({full_name,phone:String(f.get("phone")||"").trim()||null,bio:String(f.get("bio")||"").trim(),instagram_url:instagram||null,avatar_path,is_profile_public:f.get("is_profile_public")==="true",online_visible:f.get("online_visible")==="true"}).eq("id",userId());if(error)throw error;toast("Profile saved.");await refreshSessionData();}catch(e){toast(niceError(e),5000);}}
+  async function updatePassword(form){try{const f=new FormData(form||$("#passwordForm"));const password=String(f.get("password")||"");if(password.length<8)throw new Error("Use at least 8 characters.");const {error}=await supa.auth.updateUser({password});if(error)throw error;toast("Password updated.");form?.reset();}catch(e){toast(niceError(e),5000);}}
+  async function updateEmail(form){try{const f=new FormData(form||$("#emailForm"));const email=String(f.get("email")||"").trim();if(!email)throw new Error("Enter an email address.");const {error}=await supa.auth.updateUser({email});if(error)throw error;toast("Confirmation instructions sent to your email.");}catch(e){toast(niceError(e),5000);}}
+  async function renderMessagesView(){activeView="messages";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Reader ↔ author</p><h2>Author conversations</h2><p>Private conversations are only between a reader and the author they contact. There is no general user-to-user chat.</p></div><div id="messagesHost" class="loading">Loading conversations…</div></section>`;try{const {data,error}=await supa.from("author_threads").select("id,reader_id,author_id,subject,status,updated_at").or(`reader_id.eq.${userId()},author_id.eq.${userId()}`).order("updated_at",{ascending:false});if(error)throw error;const ids=[...new Set((data||[]).map(t=>t.reader_id===userId()?t.author_id:t.reader_id))];let names=new Map();if(ids.length){const q=await supa.from("public_author_profiles").select("id,full_name").in("id",ids);if(!q.error)(q.data||[]).forEach(x=>names.set(x.id,x.full_name));}$("#messagesHost").innerHTML=(data||[]).map(t=>`<div class="list-item"><div><strong>${esc(t.subject)}</strong><small>${esc(names.get(t.reader_id===userId()?t.author_id:t.reader_id)||"Conversation participant")} · ${esc(t.status)} · ${dateText(t.updated_at)}</small></div><button class="button button-outline button-xs" data-open-thread="${esc(t.id)}">Open</button></div>`).join("")||`<div class="empty-state">No author conversations yet. Visit an author's profile to contact them.</div>`;}catch(e){$("#messagesHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}<p>Run IMPLEMENTATION_MIGRATION.sql first.</p></div>`;}}
+  async function startAuthorThread(authorId){if(!session||!isApproved())return toast("Sign in with an approved account to contact an author.");main.innerHTML=`<section class="page-wrap"><div class="panel"><h3>Start a conversation</h3><form id="startThreadForm" class="form-stack"><input type="hidden" name="author_id" value="${esc(authorId)}"><label class="field">Subject<input name="subject" maxlength="160" required></label><label class="field">Message<textarea name="body" maxlength="5000" required></textarea></label><button class="button">Send message</button></form></div></section>`;}
+  async function createAuthorThread(form){try{const f=new FormData(form),author_id=String(f.get("author_id")),subject=String(f.get("subject")).trim(),body=String(f.get("body")).trim();const {data,error}=await supa.from("author_threads").insert({reader_id:userId(),author_id,subject}).select("id").single();if(error)throw error;const msg=await supa.from("author_messages").insert({thread_id:data.id,sender_id:userId(),body});if(msg.error)throw msg.error;activeThreadId=data.id;toast("Message sent to the author.");await renderThreadView(data.id);}catch(e){toast(niceError(e),5000);}}
+  async function renderThreadView(threadId){main.innerHTML=`<section class="page-wrap"><div class="loading">Loading conversation…</div></section>`;try{const {data:t,error}=await supa.from("author_threads").select("id,reader_id,author_id,subject,status,updated_at").eq("id",threadId).single();if(error)throw error;const q=await supa.from("author_messages").select("id,sender_id,body,created_at").eq("thread_id",threadId).order("created_at");if(q.error)throw q.error;main.innerHTML=`<section class="page-wrap"><button class="text-button" data-view="messages">← Conversations</button><div class="page-heading"><h2>${esc(t.subject)}</h2><p class="muted">${esc(t.status)} conversation</p></div><div class="panel">${(q.data||[]).map(m=>`<div class="message-bubble ${m.sender_id===userId()?"mine":""}">${esc(m.body)}<div class="message-meta">${m.sender_id===userId()?"You":"Author / reader"} · ${dateText(m.created_at)}</div></div>`).join("")}<form id="authorMessageForm" class="form-stack"><input type="hidden" name="thread_id" value="${esc(threadId)}"><label class="field">Reply<textarea name="body" maxlength="5000" required ${t.status==="closed"?"disabled":""}></textarea></label><button class="button" ${t.status==="closed"?"disabled":""}>Send reply</button></form><div class="form-actions">${t.status==="open"?`<button class="button button-outline button-xs" data-action="close-thread" data-thread-id="${esc(threadId)}">Close conversation</button>`:`<button class="button button-outline button-xs" data-action="reopen-thread" data-thread-id="${esc(threadId)}">Reopen conversation</button>`}</div></div></section>`;}catch(e){main.innerHTML=`<section class="page-wrap"><div class="notice danger-note">${esc(niceError(e))}</div></section>`;}}
+  async function sendAuthorMessage(form){try{const f=new FormData(form),thread_id=String(f.get("thread_id")),body=String(f.get("body")).trim();const {error}=await supa.from("author_messages").insert({thread_id,sender_id:userId(),body});if(error)throw error;await supa.from("author_threads").update({updated_at:new Date().toISOString()}).eq("id",thread_id);await renderThreadView(thread_id);}catch(e){toast(niceError(e),5000);}}
+  async function setThreadStatus(id,status){try{const {error}=await supa.from("author_threads").update({status,updated_at:new Date().toISOString()}).eq("id",id);if(error)throw error;await renderThreadView(id);}catch(e){toast(niceError(e),5000);}}
+  async function renderNotificationsView(){activeView="notifications";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your updates</p><h2>Notification centre</h2><p>Publication announcements and account updates.</p></div><div id="notificationHost" class="loading">Loading notifications…</div></section>`;try{const {data,error}=await supa.from("notifications").select("id,title,message,notification_type,is_read,created_at").eq("user_id",userId()).order("created_at",{ascending:false}).limit(100);if(error)throw error;$("#notificationHost").innerHTML=(data||[]).map(n=>`<div class="list-item"><div><strong>${esc(n.title)}</strong><small>${esc(n.message)} · ${dateText(n.created_at)} · ${esc(n.notification_type||"update")}</small></div>${n.is_read?`<span class="tag">Read</span>`:`<button class="button button-xs" data-notification-read="${esc(n.id)}">Mark read</button>`}</div>`).join("")||`<div class="empty-state">You have no notifications yet.</div>`;}catch(e){$("#notificationHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}</div>`;}}
+  function renderGuideView(){activeView="guide";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Getting started</p><h2>OnceUpon user guide</h2></div><div class="panel"><h3>Readers</h3><ol><li>Browse the public library and open a story to view its chapters.</li><li>Create an account, verify your email and wait for approval to read protected pages.</li><li>Claim daily tokens from My tokens. The first five pages of each story are free.</li><li>Save bookmarks, create reading lists and track progress in My library.</li><li>Use reading preferences to change theme, type size, font, spacing and motion.</li></ol><h3>Authors</h3><ol><li>Use Write to submit an author application.</li><li>After approval, create a draft, add chapters and pages, then submit it for review.</li><li>Use your public author profile to share a biography and optional Instagram link.</li><li>Readers can follow your public profile and contact you through private author conversations.</li></ol><h3>Privacy & safety</h3><p>Online visibility is optional. Never share passwords, verification codes, private contact details or personal location in public story comments. Report concerns through Help & feedback.</p><p>Need assistance? <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a></p></div></section>`;}
+  function renderAboutView(){activeView="about";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Our little corner of literature</p><h2>About OnceUpon</h2></div><div class="panel"><h3>Where every story finds its reader.</h3><p>OnceUpon is a community reading and writing space designed to help readers discover stories and help writers share their work. The platform combines a public story catalogue, a focused reading experience, author profiles, and moderated reader-author conversations.</p><p>OnceUpon is free to use. It does not sell subscriptions, tokens or paid features.</p><p>Questions or feedback: <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a></p></div></section>`;}
+  function renderLegalView(){activeView="legal";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Trust & safety</p><h2>Privacy and community guidelines</h2></div><div class="panel"><h3>Privacy</h3><p>OnceUpon uses account information to provide reading, writing, moderation and support features. Public author profile fields are shown only when profile visibility is enabled. Email addresses and phone numbers are not included in public author profiles. Online presence is opt-in.</p><h3>Community guidelines</h3><ul><li>Respect authors, readers and moderators.</li><li>Post only content you have the right to share.</li><li>Do not post harassment, threats, private information or spam.</li><li>Use reports for genuine safety, copyright or moderation concerns.</li><li>Do not attempt to bypass token, approval or access controls.</li></ul><h3>Account and data requests</h3><p>For account assistance or privacy requests, contact <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a>. This page is a platform guidance summary, not legal advice.</p></div></section>`;}
+  async function installApp(){if(deferredInstallPrompt){deferredInstallPrompt.prompt();const choice=await deferredInstallPrompt.userChoice;deferredInstallPrompt=null;toast(choice?.outcome==="accepted"?"OnceUpon installation started.":"Installation was not completed.");}else toast("If installation is supported, open your browser menu and choose Install app or Add to Home screen.",5000);}
+  function renderAIView(){activeView="ai";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">A free creative companion</p><h2>Ask OnceUpon AI</h2><p>This assistant works locally in your browser using the public story catalogue and built-in writing guidance. Your prompts are not sent to a third-party AI provider.</p></div><div class="panel assistant-panel"><div id="aiReply" class="assistant-reply">Hello! I can help you discover stories, brainstorm a plot, improve a character, or give general writing feedback. What are you working on?</div><form id="aiForm" class="form-stack"><label class="field">Your question<textarea name="prompt" maxlength="3000" required placeholder="Ask for story recommendations or writing feedback…"></textarea></label><button class="button" type="submit">Ask OnceUpon AI</button></form></div></section>`;}
+  function runAIResponse(form){const prompt=String(new FormData(form||$("#aiForm")).get("prompt")||"").trim();if(!prompt)return;const q=prompt.toLowerCase();let reply="";if(/recommend|suggest|find|read|story/.test(q)){const terms=q.split(/\W+/).filter(w=>w.length>3);const found=catalogue.filter(s=>terms.some(t=>[s.title,s.synopsis,s.genre,...(s.tags||[])].join(" ").toLowerCase().includes(t))).slice(0,5);reply=found.length?"Here are catalogue matches you may enjoy:\n"+found.map(s=>`• ${s.title} — ${s.genre||"Fiction"}: ${s.synopsis||"Explore this story on OnceUpon."}`).join("\n"):"I couldn't find an exact catalogue match. Try searching by genre, theme, or a keyword such as mystery, fantasy, or science fiction.";}else if(/character|protagonist|villain/.test(q)){reply="Character-development checklist:\n1. Give the character a concrete goal.\n2. Add a contradiction between what they want and what they need.\n3. Give them a believable fear or limitation.\n4. Make choices—not exposition—reveal their personality.\n5. Let the character change through consequences.";}else if(/plot|story idea|premise|brainstorm/.test(q)){reply="A useful plot seed: give your protagonist a goal, a deadline, and one piece of information that changes the meaning of everything they believed. Build three turning points: discovery, costly choice, and consequence. Keep the central conflict specific enough that the character must act.";}else if(/feedback|improve|review|writing/.test(q)){reply="For a useful revision, check five layers:\n• Clarity: can readers follow who acts and why?\n• Scene purpose: does something change by the end?\n• Specificity: replace vague description with concrete details.\n• Voice: make dialogue sound distinct for each character.\n• Pacing: vary reflection, action, and dialogue.\nIf you paste a short excerpt, I can give structured feedback on clarity, pacing, character and style.";}else{reply="I can help with story discovery, plot brainstorming, character development, and general writing feedback. Try asking: ‘Suggest a mystery story’, ‘Help me develop a protagonist’, or ‘How can I improve this paragraph?’ This is a free built-in assistant, not a live external language model.";}const node=$("#aiReply");if(node)node.textContent=reply;}
+  function renderFAQView(){activeView="faq";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">A little guidance</p><h2>Frequently asked questions</h2></div><div class="panel"><h3>Is OnceUpon free?</h3><p>Yes. There are no payments or paid features. Eligible approved readers receive free daily tokens according to the platform settings.</p><h3>Why do I need an account?</h3><p>Published stories can be discovered publicly. Reading protected pages and using community features require a verified and approved account.</p><h3>How do tokens work?</h3><p>The first five pages of each story are free. Other pages may have an author/admin-set token cost. Credits expire according to the current platform rules.</p><h3>How do I become an author?</h3><p>Sign in, open the author application area when available, submit your biography and writing samples, and wait for admin review.</p><h3>Can readers message one another?</h3><p>No. Private conversations are limited to reader-to-author contact. There is no general user-to-user chat.</p><h3>How do I install OnceUpon?</h3><p>Open the browser menu and choose Install app or Add to Home screen when your browser offers it.</p><h3>How do I contact support?</h3><p>Email <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a> or use Help & feedback after signing in.</p></div></section>`;}
+  async function loadAdminAnalytics(){try{const specs=[["Members","profiles"],["Published stories","stories",q=>q.eq("status","published")],["Pending stories","stories",q=>q.eq("status","pending_review")],["Author follows","author_follows"],["Author conversations","author_threads"]];const vals=await Promise.all(specs.map(async ([label,table,filter])=>{let q=supa.from(table).select("*",{count:"exact",head:true});if(filter)q=filter(q);const r=await q;if(r.error)throw r.error;return {label,count:r.count||0};}));const host=$("#adminAnalytics");if(host)host.innerHTML=`<div class="stat-grid">${vals.map(v=>`<div class="stat-card"><strong>${v.count}</strong><span>${esc(v.label)}</span></div>`).join("")}</div><p class="form-note">Counts reflect records visible to your current administrator role.</p>`;}catch(e){const host=$("#adminAnalytics");if(host)host.innerHTML=`<p class="muted">Analytics unavailable: ${esc(niceError(e))}</p>`;}}
+  async function exportCatalogue(){try{const {data,error}=await supa.from("stories").select("id,author_id,title,synopsis,genre,status,published_at,created_at").eq("status","published").order("published_at",{ascending:false});if(error)throw error;const rows=data||[];const cols=["id","author_id","title","synopsis","genre","status","published_at","created_at"];const csv=[cols.join(","),...rows.map(r=>cols.map(k=>'"'+String(r[k]??"").replace(/"/g,'""')+'"').join(","))].join("\r\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`onceupon-published-catalogue-${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(url);toast("Catalogue export created.");}catch(e){toast(niceError(e),5000);}}
 
   function speakCurrentPage() {
     const text = $("#readerText")?.textContent?.trim();
@@ -630,6 +691,8 @@
     if (target.dataset.view) return setView(target.dataset.view);
     if (target.dataset.authMode) return setAuthMode(target.dataset.authMode);
     if (target.dataset.openStory) return openStory(target.dataset.openStory);
+    if (target.dataset.openAuthor) { window.__onceuponAuthorId=target.dataset.openAuthor; activeView="author-profile"; return renderAuthorProfileView(target.dataset.openAuthor); }
+    if (target.dataset.openThread) { activeThreadId=target.dataset.openThread; return renderThreadView(activeThreadId); }
     if (target.dataset.openChapter) return openChapter(target.dataset.openChapter);
     if (target.dataset.openPage) return openPage(target.dataset.openPage);
     if (target.dataset.unlockPage) return unlockPage(target.dataset.unlockPage);
@@ -657,6 +720,16 @@
     else if (action === "resend-otp") await resendOtp();
     else if (action === "forgot-password") await forgotPassword();
     else if (action === "save-preferences") savePrefs();
+    else if (action === "save-profile") await saveProfile();
+    else if (action === "update-password") await updatePassword();
+    else if (action === "update-email") await updateEmail();
+    else if (action === "toggle-follow") await toggleAuthorFollow(target.dataset.authorId);
+    else if (action === "start-author-thread") await startAuthorThread(target.dataset.authorId);
+    else if (action === "close-thread") await setThreadStatus(target.dataset.threadId,"closed");
+    else if (action === "reopen-thread") await setThreadStatus(target.dataset.threadId,"open");
+    else if (action === "export-catalogue") await exportCatalogue();
+    else if (action === "install-app") await installApp();
+    else if (action === "ai-suggest") runAIResponse();
     else if (action === "read-aloud") speakCurrentPage();
     else if (action === "stop-reading") { if (window.speechSynthesis) window.speechSynthesis.cancel(); toast("Read-aloud stopped."); }
     else if (action === "font-up" || action === "font-down" || action === "line-spacing") {
@@ -687,21 +760,30 @@
     if (form.id === "listForm") return createReadingList(form);
     if (form.id === "supportForm") return sendSupport(form);
     if (form.id === "reportForm") return sendReport(form);
+    if (form.id === "profileForm") return saveProfile(form);
+    if (form.id === "passwordForm") return updatePassword(form);
+    if (form.id === "emailForm") return updateEmail(form);
+    if (form.id === "authorMessageForm") return sendAuthorMessage(form);
+    if (form.id === "startThreadForm") return createAuthorThread(form);
+    if (form.id === "aiForm") return runAIResponse(form);
   });
 
   document.addEventListener("input", event => {
     if (event.target.id === "catalogueSearch") renderCatalogue();
   });
 
+  window.addEventListener("beforeinstallprompt",event=>{event.preventDefault();deferredInstallPrompt=event;});
   $("#authButton").addEventListener("click",()=>setAuthMode("login"));
   $("#signOutButton").addEventListener("click",signOut);
   $("#themeToggle").addEventListener("click",()=>{
-    const prefs=readPrefs();prefs.theme=prefs.theme==="dark"?"light":"dark";localStorage.setItem("onceupon-prefs",JSON.stringify(prefs));document.body.classList.toggle("theme-dark",prefs.theme==="dark");
+    const prefs=readPrefs();prefs.theme=prefs.theme==="dark"?"light":"dark";localStorage.setItem("onceupon-prefs",JSON.stringify(prefs));document.body.classList.toggle("theme-dark",prefs.theme==="dark");document.body.classList.toggle("theme-light",prefs.theme==="light");
   });
   $("#year").textContent = new Date().getFullYear();
   const prefs = readPrefs();
   document.body.classList.toggle("theme-dark",prefs.theme==="dark");
+  document.body.classList.toggle("theme-light",prefs.theme==="light"||(prefs.theme==="system"&&window.matchMedia?.("(prefers-color-scheme: light)").matches));
   document.body.classList.toggle("high-contrast",prefs.contrast==="high");
+  document.body.classList.toggle("reduce-motion",prefs.motion==="reduced");
 
   if (!configured) {
     renderHome();

@@ -1,4 +1,4 @@
-const CACHE = "onceupon-shell-v1";
+const CACHE = "onceupon-midnight-v2";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/config.js", "/manifest.webmanifest", "/icon.svg"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
