@@ -24,6 +24,7 @@
   let adminProfiles = [];
   let toastTimer = null;
   let activeThreadId = null;
+  let supportRefreshTimer = null;
   let presenceTimer = null;
   let deferredInstallPrompt = null;
   let notificationPollTimer = null;
@@ -35,6 +36,28 @@
   const roleIsAuthor = () => roles.includes("author") || roleIsAdmin();
   const isApproved = () => profile?.approval_status === "approved" || roleIsAdmin();
   const userId = () => session?.user?.id;
+  const OFFLINE_IDENTITY_KEY = "onceupon-offline-identity-v1";
+  function saveOfflineIdentity() {
+    if (!session?.user?.id || !isApproved() || session.offlineOnly) return;
+    try { localStorage.setItem(OFFLINE_IDENTITY_KEY, JSON.stringify({ userId: session.user.id, displayName: profile?.full_name || "OnceUpon reader", approved: true, savedAt: new Date().toISOString() })); } catch {}
+  }
+  function loadOfflineIdentity(expectedId) {
+    try {
+      const value = JSON.parse(localStorage.getItem(OFFLINE_IDENTITY_KEY) || "null");
+      if (!value?.approved || !value.userId || (expectedId && value.userId !== expectedId)) return null;
+      return value;
+    } catch { return null; }
+  }
+  function startOfflineOnly(identity) {
+    session = { user: { id: identity.userId }, offlineOnly: true };
+    profile = { full_name: identity.displayName || "OnceUpon reader", approval_status: "approved", avatar_path: null };
+    roles = [];
+    activeView = "offline";
+    applyTheme();
+    updateChrome();
+    main.innerHTML = `<section class="page-wrap"><div class="notice">Offline mode. Your saved pages are available on this device. Sign-in, account changes, tokens, support and live catalogue features need an internet connection.</div></section>`;
+    renderOfflineView();
+  }
 
   function toast(message, duration = 3200) {
     toastNode.textContent = message;
@@ -65,7 +88,7 @@
   function updateChrome() {
     const nav = $("#nav");
     const links = [{id:"home",label:"Library"},{id:"authors",label:"Authors"},{id:"ai",label:"Ask AI"},{id:"faq",label:"FAQ"}];
-    if (session && isApproved()) { links.push({id:"wallet",label:"My tokens"},{id:"quests",label:"Quests"},{id:"community",label:"My library"},{id:"notifications",label:"Notifications"},{id:"help",label:"Help & feedback"}); }
+    if (session && isApproved()) { links.push({id:"wallet",label:"My tokens"},{id:"quests",label:"Quests"},{id:"community",label:"My library"},{id:"notifications",label:"Notifications"},{id:"help",label:"Contact Admin / Help"}); }
     if (session && isApproved()) links.push({id:"author",label:"Write"});
     if (session && roleIsAdmin()) links.push({id:"admin",label:"Administration"});
     if (session) links.push({id:"messages",label:"Messages"},{id:"account",label:"Profile"});
@@ -160,7 +183,7 @@
       <button class="text-button" data-action="browse">← Back to library</button>
       <div class="page-heading"><p class="eyebrow">${esc(s.genre || "Story")}</p><h2>${esc(s.title)}</h2><p>${esc(s.synopsis || "")}</p><small class="muted">Published ${dateText(s.published_at)} · ${currentChapters.length} chapters</small></div>
       ${!session ? `<div class="notice">Sign in, verify your email and wait for account approval to read story pages. The published catalogue is visible to everyone.</div>` : (!isApproved() ? `<div class="notice">Your account is ${esc(profile?.approval_status || "pending")}. Reading access starts after manual approval.</div>` : "")}
-      <div class="form-actions">${session&&isApproved()?`<button class="button button-outline button-xs" data-bookmark-story="${esc(s.story_id)}">Save bookmark</button>`:""}</div><div class="chapter-layout"><aside class="panel"><h3>Chapters</h3><div class="chapter-list">${currentChapters.length ? currentChapters.map(ch => `<button class="chapter-button ${currentChapter?.chapter_id===ch.chapter_id?"active":""}" data-open-chapter="${esc(ch.chapter_id)}"><strong>${String(ch.chapter_number).padStart(2,"0")}</strong> · ${esc(ch.chapter_title)}<small class="muted">${Number(ch.page_count||0)} pages</small></button>`).join("") : `<p class="muted">No chapters are available yet.</p>`}</div></aside><div id="chapterPanel" class="panel"><h3>Choose a chapter</h3><p class="muted">Select a chapter to see its pages. The first five pages of a story are free.</p></div></div>${session&&isApproved()?`<div class="panel"><h3>Review this story</h3><form id="reviewForm" class="form-stack"><label class="field">Rating<select name="rating"><option value="5">5 — Excellent</option><option value="4">4 — Very good</option><option value="3">3 — Good</option><option value="2">2 — Fair</option><option value="1">1 — Needs work</option></select></label><label class="field">Review<textarea name="review_text" maxlength="3000"></textarea></label><button class="button">Submit review</button></form></div>`:""}
+      <div class="form-actions story-tools">${session&&isApproved()?`<button class="button button-outline button-xs" data-bookmark-story="${esc(s.story_id)}">Save bookmark</button><button class="button button-outline button-xs" data-action="download-current-story">Download unlocked pages for offline</button>`:""}</div><div class="chapter-layout"><aside class="panel"><h3>Chapters</h3><div class="chapter-list">${currentChapters.length ? currentChapters.map(ch => `<button class="chapter-button ${currentChapter?.chapter_id===ch.chapter_id?"active":""}" data-open-chapter="${esc(ch.chapter_id)}"><strong>${String(ch.chapter_number).padStart(2,"0")}</strong> · ${esc(ch.chapter_title)}<small class="muted">${Number(ch.page_count||0)} pages</small></button>`).join("") : `<p class="muted">No chapters are available yet.</p>`}</div></aside><div id="chapterPanel" class="panel"><h3>Choose a chapter</h3><p class="muted">Select a chapter to see its pages. The first five pages of a story are free.</p></div></div>${session&&isApproved()?`<div class="panel"><h3>Review this story</h3><form id="reviewForm" class="form-stack"><label class="field">Rating<select name="rating"><option value="5">5 — Excellent</option><option value="4">4 — Very good</option><option value="3">3 — Good</option><option value="2">2 — Fair</option><option value="1">1 — Needs work</option></select></label><label class="field">Review<textarea name="review_text" maxlength="3000"></textarea></label><button class="button">Submit review</button></form></div>`:""}
     </section>`;
   }
 
@@ -378,7 +401,7 @@
     } catch (error) { toast(niceError(error),5000); }
   }
 
-  async function renderAdminView() {
+  async function renderAdminViewLegacy() {
     if (!roleIsAdmin()) return toast("Administrator access is required.");
     main.innerHTML = `<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Restricted workspace</p><h2>Administration</h2><p>Review accounts, author applications and submitted stories. All changes are checked by Supabase row-level security.</p></div><div id="adminPane" class="loading">Loading administration data…</div></section>`;
     try {
@@ -456,7 +479,7 @@
 
     main.innerHTML = `<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your OnceUpon identity</p><h2>Profile & settings</h2><p>Manage your public author presence, privacy and reading experience.</p></div>
       <div class="panel"><div class="profile-header"><img id="profileAvatar" class="avatar" alt="Profile photo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect width='100%25' height='100%25' fill='%2330313c'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' font-size='40' fill='%23d7c19a'%3E${esc((p.full_name||"U").slice(0,1).toUpperCase())}%3C/text%3E%3C/svg%3E"><div><h3>${esc(p.full_name||"Your profile")}</h3><p class="muted">${esc(session?.user?.email||"")}</p><span class="tag">${esc(p.approval_status||"pending")} · ${roles.map(esc).join(", ")||"reader"}</span></div></div>
-      <form id="profileForm" class="form-grid" style="margin-top:18px"><label class="field">Display name<input name="full_name" maxlength="100" required value="${esc(p.full_name||"")}"></label><label class="field">Phone (optional)<input name="phone" type="tel" maxlength="40" value="${esc(p.phone||"")}"></label><label class="field">Profile photo (JPG, PNG or WebP; max 5 MB)<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp"></label><label class="field" style="grid-column:1/-1">Bio<textarea name="bio" maxlength="1200" placeholder="Tell readers a little about yourself…">${esc(p.bio||"")}</textarea></label><label class="field">Instagram profile URL<input name="instagram_url" type="url" placeholder="https://www.instagram.com/username/" value="${esc(p.instagram_url||"")}"></label><label class="field">Profile visibility<select name="is_profile_public"><option value="true" ${p.is_profile_public!==false?"selected":""}>Public</option><option value="false" ${p.is_profile_public===false?"selected":""}>Private</option></select></label><label class="field">Online visibility<select name="online_visible"><option value="false" ${!p.online_visible?"selected":""}>Hidden</option><option value="true" ${p.online_visible?"selected":""}>Show when I'm active</option></select></label><div class="form-actions" style="grid-column:1/-1"><button class="button" type="submit">Save profile</button></div></form></div>
+      <form id="profileForm" class="form-grid" style="margin-top:18px"><label class="field">Display name<input name="full_name" maxlength="100" required value="${esc(p.full_name||"")}"></label><label class="field">Phone (optional)<input name="phone" type="tel" maxlength="40" value="${esc(p.phone||"")}"></label><label class="field">Profile photo (JPG, PNG or WebP; max 5 MB)<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp"></label><div class="form-actions"><button class="button button-outline button-xs" type="button" data-action="remove-avatar" ${p.avatar_path?"":"disabled"}>Remove current photo</button></div><label class="field" style="grid-column:1/-1">Bio<textarea name="bio" maxlength="1200" placeholder="Tell readers a little about yourself…">${esc(p.bio||"")}</textarea></label><label class="field">Instagram profile URL<input name="instagram_url" type="url" placeholder="https://www.instagram.com/username/" value="${esc(p.instagram_url||"")}"></label><label class="field">Profile visibility<select name="is_profile_public"><option value="true" ${p.is_profile_public!==false?"selected":""}>Public</option><option value="false" ${p.is_profile_public===false?"selected":""}>Private</option></select></label><label class="field">Online visibility<select name="online_visible"><option value="false" ${!p.online_visible?"selected":""}>Hidden</option><option value="true" ${p.online_visible?"selected":""}>Show when I'm active</option></select></label><div class="form-actions" style="grid-column:1/-1"><button class="button" type="submit">Save profile</button></div></form></div>
       <div class="panel"><h3>Account security</h3><p class="muted">Email changes require confirmation from Supabase. Use a strong, unique password.</p><form id="emailForm" class="form-grid"><label class="field">New email<input name="email" type="email" required value="${esc(session?.user?.email||"")}"></label><div class="form-actions"><button class="button button-outline" type="submit">Update email</button></div></form><form id="passwordForm" class="form-grid"><label class="field">New password<input name="password" type="password" minlength="8" autocomplete="new-password" required></label><div class="form-actions"><button class="button button-outline" type="submit">Change password</button></div></form></div>
       <div class="panel"><h3>Reading preferences</h3><div class="form-grid"><label class="field">Theme<select id="prefTheme"><option value="dark">Midnight Library</option><option value="light">Warm paper</option><option value="system">Use device setting</option></select></label><label class="field">Reading font<select id="prefFamily"><option value="serif">Literary serif</option><option value="sans">Modern sans-serif</option></select></label><label class="field">Text size<select id="prefFont"><option value="16">Small</option><option value="18">Regular</option><option value="20">Large</option><option value="22">Extra large</option></select></label><label class="field">Line spacing<select id="prefLine"><option value="1.6">Compact</option><option value="1.8">Comfortable</option><option value="2">Spacious</option></select></label><label class="field">Contrast<select id="prefContrast"><option value="normal">Normal</option><option value="high">High contrast</option></select></label><label class="field">Motion<select id="prefMotion"><option value="normal">Allow motion</option><option value="reduced">Reduce motion</option></select></label></div><div class="form-actions"><button class="button" data-action="save-preferences">Save preferences</button></div></div>
       <div class="notice">Approval status and account roles are managed by the OnceUpon administration team, not by profile settings.</div></section>`;
@@ -495,6 +518,8 @@
       profile = profileData;
       syncPresence();
       roles = (roleData||[]).map(r=>r.role);
+      applyTheme();
+      saveOfflineIdentity();
       updateChrome();
       if (isApproved()) {
         try { await rpc("claim_daily_tokens"); } catch (error) { console.info("Daily claim not made:", error.message); }
@@ -511,6 +536,7 @@
       else if (activeView === "authors") await renderAuthorsView();
       else if (activeView === "author-profile" && window.__onceuponAuthorId) await renderAuthorProfileView(window.__onceuponAuthorId);
       else if (activeView === "messages") await renderMessagesView();
+      else if (activeView === "offline") await renderOfflineView();
       else if (activeView === "ai") renderAIView();
       else if (activeView === "faq") renderFAQView();
       else if (activeView === "about") renderAboutView();
@@ -519,7 +545,12 @@
       else renderHome();
     } catch (error) {
       console.error("Account load:",error);
-      main.innerHTML = `<section class="page-wrap"><div class="notice danger-note">Your session exists, but your OnceUpon profile or role could not be loaded: ${esc(niceError(error))}</div></section>`;
+      const cached = loadOfflineIdentity(session?.user?.id);
+      if (cached && (!navigator.onLine || /fetch|network|offline|timeout/i.test(niceError(error)))) {
+        startOfflineOnly(cached);
+      } else {
+        main.innerHTML = `<section class="page-wrap"><div class="notice danger-note">Your session exists, but your OnceUpon profile or role could not be loaded: ${esc(niceError(error))}</div></section>`;
+      }
     }
   }
 
@@ -527,7 +558,21 @@
     const fd = new FormData(form);
     setMessage($("#authMessage"),"Signing in…");
     try {
-      const {data,error} = await supa.auth.signInWithPassword({email:String(fd.get("email")).trim(),password:String(fd.get("password"))});
+      const loginValue=String(fd.get("login")).trim();
+      let data,error;
+      if(loginValue.includes("@")){
+        const result=await supa.auth.signInWithPassword({email:loginValue,password:String(fd.get("password"))});
+        data=result.data; error=result.error;
+      } else {
+        const result=await supa.functions.invoke("username-signin",{body:{username:loginValue,password:String(fd.get("password"))}});
+        if(result.error) throw result.error;
+        data={session:result.data?.session};
+        error=result.data?.error ? new Error(result.data.error) : null;
+        if(!data.session) throw new Error("Username sign-in did not return a session. Check the username and password.");
+        const set=await supa.auth.setSession(data.session);
+        if(set.error) throw set.error;
+        data=set.data;
+      }
       if (error) throw error;
       session = data.session;
       closeModal(); toast("Signed in."); await refreshSessionData();
@@ -540,7 +585,7 @@
     const fullName = String(fd.get("full_name")).trim();
     setMessage($("#authMessage"),"Creating your account…");
     try {
-      const {data,error} = await supa.auth.signUp({email,password:String(fd.get("password")),options:{emailRedirectTo:window.location.origin,data:{full_name:fullName,phone:String(fd.get("phone")||"").trim()}}});
+      const {data,error} = await supa.auth.signUp({email,password:String(fd.get("password")),options:{emailRedirectTo:window.location.origin,data:{full_name:fullName,username:String(fd.get("username")||"").trim().toLowerCase(),phone:String(fd.get("phone")||"").trim()}}});
       if (error) throw error;
       if (data.session) {
         session = data.session; closeModal(); toast("Account created. Complete any requested email verification."); await refreshSessionData();
@@ -573,8 +618,8 @@
   }
 
   async function forgotPassword() {
-    const email = $("#loginForm").elements.email.value.trim();
-    if (!email) return setMessage($("#authMessage"),"Enter your email in the sign-in form first.",true);
+    const email = $("#loginForm").elements.login.value.trim();
+    if (!email || !email.includes("@")) return setMessage($("#authMessage"),"Enter the email address linked to your account to reset your password.",true);
     try {
       const {error} = await supa.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin});
       if (error) throw error;
@@ -583,15 +628,22 @@
   }
 
   async function signOut() {
-    if(presenceTimer)clearInterval(presenceTimer);presenceTimer=null;if(notificationPollTimer)clearInterval(notificationPollTimer);notificationPollTimer=null;
+    if(presenceTimer)clearInterval(presenceTimer);presenceTimer=null;if(notificationPollTimer)clearInterval(notificationPollTimer);notificationPollTimer=null;if(supportRefreshTimer)clearInterval(supportRefreshTimer);supportRefreshTimer=null;
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (session?.offlineOnly) { session=null; profile=null; roles=[]; activeView="home"; updateChrome(); renderHome(); return toast("Exited offline mode. Your saved pages remain on this device."); }
     try { const {error} = await supa.auth.signOut(); if (error) throw error; }
     catch (error) { toast(niceError(error)); }
-    session=null; profile=null; roles=[]; activeView="home"; updateChrome(); renderHome(); toast("Signed out.");
+    try { localStorage.removeItem(OFFLINE_IDENTITY_KEY); } catch {}
+    session=null; profile=null; roles=[]; activeView="home"; updateChrome(); renderHome(); toast("Signed out. Offline downloads remain on this device and require signing in again to view.");
   }
 
   function setView(view) {
-    const privateViews=["wallet","quests","community","notifications","help","account","messages"];
+    if (supportRefreshTimer) { clearInterval(supportRefreshTimer); supportRefreshTimer = null; }
+    if(session?.offlineOnly && !["offline","ai","faq","about","guide","legal","home"].includes(view)) {
+      toast("This feature needs an internet connection. Your saved offline pages are still available.");
+      return;
+    }
+    const privateViews=["wallet","quests","community","notifications","help","account","messages","offline"];
     if(privateViews.includes(view)&&!session){setAuthMode("login");return;}
     if(["wallet","quests","community","notifications"].includes(view)&&!isApproved()){toast("This area is available after account approval.");return;}
     if(view==="admin"&&!roleIsAdmin()){toast("Administrator access is required.");return;}
@@ -613,6 +665,7 @@
     else if (view === "authors") renderAuthorsView();
     else if (view === "author-profile") renderAuthorProfileView(window.__onceuponAuthorId);
     else if (view === "messages") renderMessagesView();
+    else if (view === "offline") renderOfflineView();
     else if (view === "ai") renderAIView();
     else if (view === "faq") renderFAQView();
   }
@@ -640,7 +693,7 @@
   async function createReadingList(form){try{const f=new FormData(form),{error}=await supa.from("reading_lists").insert({user_id:userId(),title:String(f.get("title")).trim(),is_public:f.get("is_public")==="true"});if(error)throw error;toast("Reading list created.");await renderCommunityView();}catch(e){toast(niceError(e),5000);}}
   async function addToList(listId){if(!currentStory)return toast("Open a story first, then add it to a list.");try{const {error}=await supa.from("reading_list_items").upsert({list_id:listId,story_id:currentStory.story_id},{onConflict:"list_id,story_id"});if(error)throw error;toast("Story added to reading list.");}catch(e){toast(niceError(e),5000);}}
   async function markNotification(id){const {error}=await supa.from("notifications").update({is_read:true}).eq("id",id).eq("user_id",userId());if(error)toast(niceError(error));else if(activeView==="notifications")await renderNotificationsView();else await renderCommunityView();}
-  async function renderHelpView(){main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">We're listening</p><h2>Help & feedback</h2></div><div class="panel"><h3>Contact support</h3><form id="supportForm" class="form-stack"><label class="field">Subject<input name="subject" maxlength="160" required></label><label class="field">Message<textarea name="message" maxlength="5000" required></textarea></label><button class="button">Send message</button></form></div><div class="panel"><h3>Report a concern</h3><form id="reportForm" class="form-stack"><label class="field">Target type<select name="target_type"><option value="story">Story</option><option value="comment">Comment</option><option value="review">Review</option><option value="user">User</option></select></label><label class="field">Target ID<input name="target_id" required></label><label class="field">Reason<input name="reason" maxlength="160" required></label><label class="field">Details<textarea name="details" maxlength="3000"></textarea></label><button class="button">Submit report</button></form></div></section>`;}
+  async function renderHelpView(){main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">We're listening</p><h2>Contact Admin / Help</h2></div><div class="panel"><h3>Contact support</h3><form id="supportForm" class="form-stack"><label class="field">Subject<input name="subject" maxlength="160" required></label><label class="field">Message<textarea name="message" maxlength="5000" required></textarea></label><button class="button">Send message</button></form></div><div class="panel"><h3>Report a concern</h3><form id="reportForm" class="form-stack"><label class="field">Target type<select name="target_type"><option value="story">Story</option><option value="comment">Comment</option><option value="review">Review</option><option value="user">User</option></select></label><label class="field">Target ID<input name="target_id" required></label><label class="field">Reason<input name="reason" maxlength="160" required></label><label class="field">Details<textarea name="details" maxlength="3000"></textarea></label><button class="button">Submit report</button></form></div></section>`;}
   async function sendSupport(form){try{const f=new FormData(form),{error}=await supa.from("support_messages").insert({user_id:userId(),subject:String(f.get("subject")).trim(),message:String(f.get("message")).trim()});if(error)throw error;toast("Support message sent.");form.reset();}catch(e){toast(niceError(e),5000);}}
   async function sendReport(form){try{const f=new FormData(form),{error}=await supa.from("reports").insert({reporter_id:userId(),target_type:String(f.get("target_type")),target_id:String(f.get("target_id")).trim(),reason:String(f.get("reason")).trim(),details:String(f.get("details")||"").trim()});if(error)throw error;toast("Report submitted for review.");form.reset();}catch(e){toast(niceError(e),5000);}}
   async function saveReview(form){try{const f=new FormData(form),{error}=await supa.from("reviews").upsert({user_id:userId(),story_id:currentStory.story_id,rating:Number(f.get("rating")),review_text:String(f.get("review_text")||"").trim(),moderation_status:"pending",updated_at:new Date().toISOString()},{onConflict:"user_id,story_id"});if(error)throw error;toast("Review submitted for moderation.");}catch(e){toast(niceError(e),5000);}}
@@ -658,21 +711,49 @@
   async function saveProfile(form){try{const f=new FormData(form||$("#profileForm"));const full_name=String(f.get("full_name")||"").trim();if(!full_name)throw new Error("Enter a display name.");let avatar_path=profile?.avatar_path||null;const file=f.get("avatar");if(file&&file.size){if(file.size>5*1024*1024)throw new Error("Profile photo must be 5 MB or smaller.");if(!["image/jpeg","image/png","image/webp"].includes(file.type))throw new Error("Use a JPG, PNG or WebP image.");const ext=file.type.split("/")[1].replace("jpeg","jpg"),path=`${userId()}/${crypto.randomUUID()}.${ext}`;const up=await supa.storage.from("profile-photos").upload(path,file,{upsert:false,contentType:file.type});if(up.error)throw up.error;avatar_path=path;}const instagram=String(f.get("instagram_url")||"").trim();if(instagram&&!/^https:\/\/(www\.)?instagram\.com\//i.test(instagram))throw new Error("Enter a valid HTTPS Instagram profile URL.");const {error}=await supa.from("profiles").update({full_name,phone:String(f.get("phone")||"").trim()||null,bio:String(f.get("bio")||"").trim(),instagram_url:instagram||null,avatar_path,is_profile_public:f.get("is_profile_public")==="true",online_visible:f.get("online_visible")==="true"}).eq("id",userId());if(error)throw error;toast("Profile saved.");await refreshSessionData();}catch(e){toast(niceError(e),5000);}}
   async function updatePassword(form){try{const f=new FormData(form||$("#passwordForm"));const password=String(f.get("password")||"");if(password.length<8)throw new Error("Use at least 8 characters.");const {error}=await supa.auth.updateUser({password});if(error)throw error;toast("Password updated.");form?.reset();}catch(e){toast(niceError(e),5000);}}
   async function updateEmail(form){try{const f=new FormData(form||$("#emailForm"));const email=String(f.get("email")||"").trim();if(!email)throw new Error("Enter an email address.");const {error}=await supa.auth.updateUser({email});if(error)throw error;toast("Confirmation instructions sent to your email.");}catch(e){toast(niceError(e),5000);}}
-  async function renderMessagesView(){activeView="messages";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Reader ↔ author</p><h2>Author conversations</h2><p>Private conversations are only between a reader and the author they contact. There is no general user-to-user chat.</p></div><div id="messagesHost" class="loading">Loading conversations…</div></section>`;try{const {data,error}=await supa.from("author_threads").select("id,reader_id,author_id,subject,status,updated_at").or(`reader_id.eq.${userId()},author_id.eq.${userId()}`).order("updated_at",{ascending:false});if(error)throw error;const ids=[...new Set((data||[]).map(t=>t.reader_id===userId()?t.author_id:t.reader_id))];let names=new Map();if(ids.length){const q=await supa.from("public_author_profiles").select("id,full_name").in("id",ids);if(!q.error)(q.data||[]).forEach(x=>names.set(x.id,x.full_name));}$("#messagesHost").innerHTML=(data||[]).map(t=>`<div class="list-item"><div><strong>${esc(t.subject)}</strong><small>${esc(names.get(t.reader_id===userId()?t.author_id:t.reader_id)||"Conversation participant")} · ${esc(t.status)} · ${dateText(t.updated_at)}</small></div><button class="button button-outline button-xs" data-open-thread="${esc(t.id)}">Open</button></div>`).join("")||`<div class="empty-state">No author conversations yet. Visit an author's profile to contact them.</div>`;}catch(e){$("#messagesHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}<p>Run IMPLEMENTATION_MIGRATION.sql first.</p></div>`;}}
+  async function renderMessagesView(){
+    activeView="messages";updateChrome();
+    main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">One inbox, every conversation</p><h2>Messages</h2><p>Author and administrator conversations appear together, clearly labelled. No separate inbox is needed when your account has both roles.</p></div><div class="panel"><div class="form-actions"><button class="button button-outline button-xs" data-inbox-filter="all">All</button><button class="button button-outline button-xs" data-inbox-filter="admin">[ADMIN]</button><button class="button button-outline button-xs" data-inbox-filter="author">[AUTHOR]</button></div><div id="messagesHost" class="loading">Loading conversations…</div></div></section>`;
+    try{
+      const [authorQ,supportQ]=await Promise.all([
+        supa.from("author_threads").select("id,reader_id,author_id,subject,status,updated_at").or(`reader_id.eq.${userId()},author_id.eq.${userId()}`).order("updated_at",{ascending:false}),
+        supa.from("support_conversations").select("id,user_id,subject,status,updated_at").order("updated_at",{ascending:false})
+      ]);
+      if(authorQ.error)throw authorQ.error;
+      if(supportQ.error && !/permission|row-level/i.test(supportQ.error.message||""))throw supportQ.error;
+      const authors=authorQ.data||[];
+      const supports=(supportQ.data||[]).filter(c=>roleIsAdmin()||c.user_id===userId());
+      const ids=[...new Set(authors.map(t=>t.reader_id===userId()?t.author_id:t.reader_id))];
+      let names=new Map();
+      if(ids.length){const q=await supa.from("public_author_profiles").select("id,full_name").in("id",ids);if(!q.error)(q.data||[]).forEach(x=>names.set(x.id,x.full_name));}
+      const rows=[
+        ...supports.map(c=>({kind:"admin",id:c.id,subject:c.subject,status:c.status,updated_at:c.updated_at,owner:c.user_id})),
+        ...authors.map(t=>({kind:"author",id:t.id,subject:t.subject,status:t.status,updated_at:t.updated_at,other:names.get(t.reader_id===userId()?t.author_id:t.reader_id)||"Conversation participant"}))
+      ].sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
+      window.__onceuponInboxRows=rows;
+      const draw=(filter="all")=>{
+        const visible=rows.filter(r=>filter==="all"||r.kind===filter);
+        $("#messagesHost").innerHTML=visible.map(r=>`<div class="list-item"><div><strong><span class="tag ${r.kind==="admin"?"tag-gold":"tag"}">[${r.kind.toUpperCase()}]</span> ${esc(r.subject)}</strong><small>${r.kind==="admin"?(roleIsAdmin()&&r.owner!==userId()?"Support conversation · user request":"Contact Admin"):esc(r.other)} · ${esc(r.status)} · ${dateText(r.updated_at)}</small></div><button class="button button-outline button-xs" ${r.kind==="admin"?`data-support-open="${esc(r.id)}" data-support-admin="${roleIsAdmin()&&r.owner!==userId()}"`:`data-open-thread="${esc(r.id)}"`}>Open</button></div>`).join("")||`<div class="empty-state">No ${filter==="all"?"":filter+" "}conversations yet.</div>`;
+      };
+      draw("all");
+      document.querySelectorAll("[data-inbox-filter]").forEach(b=>b.addEventListener("click",()=>draw(b.dataset.inboxFilter),{once:true}));
+    }catch(e){$("#messagesHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}<p>Check that the support-chat and author-message migrations have been applied.</p></div>`;}
+  }
   async function startAuthorThread(authorId){if(!session||!isApproved())return toast("Sign in with an approved account to contact an author.");main.innerHTML=`<section class="page-wrap"><div class="panel"><h3>Start a conversation</h3><form id="startThreadForm" class="form-stack"><input type="hidden" name="author_id" value="${esc(authorId)}"><label class="field">Subject<input name="subject" maxlength="160" required></label><label class="field">Message<textarea name="body" maxlength="5000" required></textarea></label><button class="button">Send message</button></form></div></section>`;}
   async function createAuthorThread(form){try{const f=new FormData(form),author_id=String(f.get("author_id")),subject=String(f.get("subject")).trim(),body=String(f.get("body")).trim();const {data,error}=await supa.from("author_threads").insert({reader_id:userId(),author_id,subject}).select("id").single();if(error)throw error;const msg=await supa.from("author_messages").insert({thread_id:data.id,sender_id:userId(),body});if(msg.error)throw msg.error;activeThreadId=data.id;toast("Message sent to the author.");await renderThreadView(data.id);}catch(e){toast(niceError(e),5000);}}
   async function renderThreadView(threadId){main.innerHTML=`<section class="page-wrap"><div class="loading">Loading conversation…</div></section>`;try{const {data:t,error}=await supa.from("author_threads").select("id,reader_id,author_id,subject,status,updated_at").eq("id",threadId).single();if(error)throw error;const q=await supa.from("author_messages").select("id,sender_id,body,created_at").eq("thread_id",threadId).order("created_at");if(q.error)throw q.error;main.innerHTML=`<section class="page-wrap"><button class="text-button" data-view="messages">← Conversations</button><div class="page-heading"><h2>${esc(t.subject)}</h2><p class="muted">${esc(t.status)} conversation</p></div><div class="panel">${(q.data||[]).map(m=>`<div class="message-bubble ${m.sender_id===userId()?"mine":""}">${esc(m.body)}<div class="message-meta">${m.sender_id===userId()?"You":"Author / reader"} · ${dateText(m.created_at)}</div></div>`).join("")}<form id="authorMessageForm" class="form-stack"><input type="hidden" name="thread_id" value="${esc(threadId)}"><label class="field">Reply<textarea name="body" maxlength="5000" required ${t.status==="closed"?"disabled":""}></textarea></label><button class="button" ${t.status==="closed"?"disabled":""}>Send reply</button></form><div class="form-actions">${t.status==="open"?`<button class="button button-outline button-xs" data-action="close-thread" data-thread-id="${esc(threadId)}">Close conversation</button>`:`<button class="button button-outline button-xs" data-action="reopen-thread" data-thread-id="${esc(threadId)}">Reopen conversation</button>`}</div></div></section>`;}catch(e){main.innerHTML=`<section class="page-wrap"><div class="notice danger-note">${esc(niceError(e))}</div></section>`;}}
   async function sendAuthorMessage(form){try{const f=new FormData(form),thread_id=String(f.get("thread_id")),body=String(f.get("body")).trim();const {error}=await supa.from("author_messages").insert({thread_id,sender_id:userId(),body});if(error)throw error;await supa.from("author_threads").update({updated_at:new Date().toISOString()}).eq("id",thread_id);await renderThreadView(thread_id);}catch(e){toast(niceError(e),5000);}}
   async function setThreadStatus(id,status){try{const {error}=await supa.from("author_threads").update({status,updated_at:new Date().toISOString()}).eq("id",id);if(error)throw error;await renderThreadView(id);}catch(e){toast(niceError(e),5000);}}
-  async function renderNotificationsView(){activeView="notifications";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your updates</p><h2>Notification centre</h2><p>Publication announcements and account updates.</p></div><div id="notificationHost" class="loading">Loading notifications…</div></section>`;try{const {data,error}=await supa.from("notifications").select("id,title,message,notification_type,is_read,created_at").eq("user_id",userId()).order("created_at",{ascending:false}).limit(100);if(error)throw error;$("#notificationHost").innerHTML=(data||[]).map(n=>`<div class="list-item"><div><strong>${esc(n.title)}</strong><small>${esc(n.message)} · ${dateText(n.created_at)} · ${esc(n.notification_type||"update")}</small></div>${n.is_read?`<span class="tag">Read</span>`:`<button class="button button-xs" data-notification-read="${esc(n.id)}">Mark read</button>`}</div>`).join("")||`<div class="empty-state">You have no notifications yet.</div>`;}catch(e){$("#notificationHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}</div>`;}}
-  function renderGuideView(){activeView="guide";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Getting started</p><h2>OnceUpon user guide</h2></div><div class="panel"><h3>Readers</h3><ol><li>Browse the public library and open a story to view its chapters.</li><li>Create an account, verify your email and wait for approval to read protected pages.</li><li>Claim daily tokens from My tokens. The first five pages of each story are free.</li><li>Save bookmarks, create reading lists and track progress in My library.</li><li>Use reading preferences to change theme, type size, font, spacing and motion.</li></ol><h3>Authors</h3><ol><li>Use Write to submit an author application.</li><li>After approval, create a draft, add chapters and pages, then submit it for review.</li><li>Use your public author profile to share a biography and optional Instagram link.</li><li>Readers can follow your public profile and contact you through private author conversations.</li></ol><h3>Privacy & safety</h3><p>Online visibility is optional. Never share passwords, verification codes, private contact details or personal location in public story comments. Report concerns through Help & feedback.</p><p>Need assistance? <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a></p></div></section>`;}
+  async function renderNotificationsView(){activeView="notifications";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your updates</p><h2>Notification centre</h2><p>Publication announcements and account updates.</p></div><div id="notificationHost" class="loading">Loading notifications…</div></section>`;try{const {data,error}=await supa.from("notifications").select("id,title,message,notification_type,is_read,created_at").eq("user_id",userId()).order("created_at",{ascending:false}).limit(100);if(error)throw error;const unread=(data||[]).filter(n=>!n.is_read).length;
+      $("#notificationHost").innerHTML=`<div class="form-actions"><strong>${unread} unread</strong><button class="button button-outline button-xs" data-notification-all-read ${unread?"":"disabled"}>Mark all as read</button></div>`+((data||[]).map(n=>`<div class="list-item"><div><strong>${esc(n.title)}</strong><small>${esc(n.message)} · ${dateText(n.created_at)} · ${esc(n.notification_type||"update")}</small></div>${n.is_read?`<span class="tag">Read</span>`:`<button class="button button-xs" data-notification-read="${esc(n.id)}">Mark read</button>`}</div>`).join("")||`<div class="empty-state">You have no notifications yet.</div>`);}catch(e){$("#notificationHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}</div>`;}}
+  function renderGuideView(){activeView="guide";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Getting started</p><h2>OnceUpon user guide</h2></div><div class="panel"><h3>Readers</h3><ol><li>Browse the public library and open a story to view its chapters.</li><li>Create an account, verify your email and wait for approval to read protected pages.</li><li>Claim daily tokens from My tokens. The first five pages of each story are free.</li><li>Save bookmarks, create reading lists and track progress in My library.</li><li>Use reading preferences to change theme, type size, font, spacing and motion.</li></ol><h3>Authors</h3><ol><li>Use Write to submit an author application.</li><li>After approval, create a draft, add chapters and pages, then submit it for review.</li><li>Use your public author profile to share a biography and optional Instagram link.</li><li>Readers can follow your public profile and contact you through private author messages.</li></ol><h3>Privacy & safety</h3><p>Online visibility is optional. Never share passwords, verification codes, private contact details or personal location in public story comments. Report concerns through Contact Admin / Help.</p><p>Need assistance? <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a></p></div></section>`;}
   function renderAboutView(){activeView="about";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Our little corner of literature</p><h2>About OnceUpon</h2></div><div class="panel"><h3>Where every story finds its reader.</h3><p>OnceUpon is a community reading and writing space designed to help readers discover stories and help writers share their work. The platform combines a public story catalogue, a focused reading experience, author profiles, and moderated reader-author conversations.</p><p>OnceUpon is free to use. It does not sell subscriptions, tokens or paid features.</p><p>Questions or feedback: <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a></p></div></section>`;}
   function renderLegalView(){activeView="legal";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Trust & safety</p><h2>Privacy and community guidelines</h2></div><div class="panel"><h3>Privacy</h3><p>OnceUpon uses account information to provide reading, writing, moderation and support features. Public author profile fields are shown only when profile visibility is enabled. Email addresses and phone numbers are not included in public author profiles. Online presence is opt-in.</p><h3>Community guidelines</h3><ul><li>Respect authors, readers and moderators.</li><li>Post only content you have the right to share.</li><li>Do not post harassment, threats, private information or spam.</li><li>Use reports for genuine safety, copyright or moderation concerns.</li><li>Do not attempt to bypass token, approval or access controls.</li></ul><h3>Account and data requests</h3><p>For account assistance or privacy requests, contact <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a>. This page is a platform guidance summary, not legal advice.</p></div></section>`;}
   async function installApp(){if(deferredInstallPrompt){deferredInstallPrompt.prompt();const choice=await deferredInstallPrompt.userChoice;deferredInstallPrompt=null;toast(choice?.outcome==="accepted"?"OnceUpon installation started.":"Installation was not completed.");}else toast("If installation is supported, open your browser menu and choose Install app or Add to Home screen.",5000);}
   function renderAIView(){activeView="ai";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">A free creative companion</p><h2>Ask OnceUpon AI</h2><p>This assistant works locally in your browser using the public story catalogue and built-in writing guidance. Your prompts are not sent to a third-party AI provider.</p></div><div class="panel assistant-panel"><div id="aiReply" class="assistant-reply">Hello! I can help you discover stories, brainstorm a plot, improve a character, or give general writing feedback. What are you working on?</div><form id="aiForm" class="form-stack"><label class="field">Your question<textarea name="prompt" maxlength="3000" required placeholder="Ask for story recommendations or writing feedback…"></textarea></label><button class="button" type="submit">Ask OnceUpon AI</button></form></div></section>`;}
   function runAIResponse(form){const prompt=String(new FormData(form||$("#aiForm")).get("prompt")||"").trim();if(!prompt)return;const q=prompt.toLowerCase();let reply="";if(/recommend|suggest|find|read|story/.test(q)){const terms=q.split(/\W+/).filter(w=>w.length>3);const found=catalogue.filter(s=>terms.some(t=>[s.title,s.synopsis,s.genre,...(s.tags||[])].join(" ").toLowerCase().includes(t))).slice(0,5);reply=found.length?"Here are catalogue matches you may enjoy:\n"+found.map(s=>`• ${s.title} — ${s.genre||"Fiction"}: ${s.synopsis||"Explore this story on OnceUpon."}`).join("\n"):"I couldn't find an exact catalogue match. Try searching by genre, theme, or a keyword such as mystery, fantasy, or science fiction.";}else if(/character|protagonist|villain/.test(q)){reply="Character-development checklist:\n1. Give the character a concrete goal.\n2. Add a contradiction between what they want and what they need.\n3. Give them a believable fear or limitation.\n4. Make choices—not exposition—reveal their personality.\n5. Let the character change through consequences.";}else if(/plot|story idea|premise|brainstorm/.test(q)){reply="A useful plot seed: give your protagonist a goal, a deadline, and one piece of information that changes the meaning of everything they believed. Build three turning points: discovery, costly choice, and consequence. Keep the central conflict specific enough that the character must act.";}else if(/feedback|improve|review|writing/.test(q)){reply="For a useful revision, check five layers:\n• Clarity: can readers follow who acts and why?\n• Scene purpose: does something change by the end?\n• Specificity: replace vague description with concrete details.\n• Voice: make dialogue sound distinct for each character.\n• Pacing: vary reflection, action, and dialogue.\nIf you paste a short excerpt, I can give structured feedback on clarity, pacing, character and style.";}else{reply="I can help with story discovery, plot brainstorming, character development, and general writing feedback. Try asking: ‘Suggest a mystery story’, ‘Help me develop a protagonist’, or ‘How can I improve this paragraph?’ This is a free built-in assistant, not a live external language model.";}const node=$("#aiReply");if(node)node.textContent=reply;}
-  function renderFAQView(){activeView="faq";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">A little guidance</p><h2>Frequently asked questions</h2></div><div class="panel"><h3>Is OnceUpon free?</h3><p>Yes. There are no payments or paid features. Eligible approved readers receive free daily tokens according to the platform settings.</p><h3>Why do I need an account?</h3><p>Published stories can be discovered publicly. Reading protected pages and using community features require a verified and approved account.</p><h3>How do tokens work?</h3><p>The first five pages of each story are free. Other pages may have an author/admin-set token cost. Credits expire according to the current platform rules.</p><h3>How do I become an author?</h3><p>Sign in, open the author application area when available, submit your biography and writing samples, and wait for admin review.</p><h3>Can readers message one another?</h3><p>No. Private conversations are limited to reader-to-author contact. There is no general user-to-user chat.</p><h3>How do I install OnceUpon?</h3><p>Open the browser menu and choose Install app or Add to Home screen when your browser offers it.</p><h3>How do I contact support?</h3><p>Email <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a> or use Help & feedback after signing in.</p></div></section>`;}
-  async function loadAdminAnalytics(){try{const specs=[["Members","profiles"],["Published stories","stories",q=>q.eq("status","published")],["Pending stories","stories",q=>q.eq("status","pending_review")],["Author follows","author_follows"],["Author conversations","author_threads"]];const vals=await Promise.all(specs.map(async ([label,table,filter])=>{let q=supa.from(table).select("*",{count:"exact",head:true});if(filter)q=filter(q);const r=await q;if(r.error)throw r.error;return {label,count:r.count||0};}));const host=$("#adminAnalytics");if(host)host.innerHTML=`<div class="stat-grid">${vals.map(v=>`<div class="stat-card"><strong>${v.count}</strong><span>${esc(v.label)}</span></div>`).join("")}</div><p class="form-note">Counts reflect records visible to your current administrator role.</p>`;}catch(e){const host=$("#adminAnalytics");if(host)host.innerHTML=`<p class="muted">Analytics unavailable: ${esc(niceError(e))}</p>`;}}
+  function renderFAQView(){activeView="faq";updateChrome();main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">A little guidance</p><h2>Frequently asked questions</h2></div><div class="panel"><h3>Is OnceUpon free?</h3><p>Yes. There are no payments or paid features. Eligible approved readers receive free daily tokens according to the platform settings.</p><h3>Why do I need an account?</h3><p>Published stories can be discovered publicly. Reading protected pages and using community features require a verified and approved account.</p><h3>How do tokens work?</h3><p>The first five pages of each story are free. Other pages may have an author/admin-set token cost. Credits expire according to the current platform rules.</p><h3>How do I become an author?</h3><p>Sign in, open the author application area when available, submit your biography and writing samples, and wait for admin review.</p><h3>Can readers message one another?</h3><p>No. Private conversations are limited to reader-to-author contact. There is no general user-to-user chat.</p><h3>How do I install OnceUpon?</h3><p>Open the browser menu and choose Install app or Add to Home screen when your browser offers it.</p><h3>How do I contact support?</h3><p>Email <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a> or use Contact Admin / Help after signing in.</p></div></section>`;}
+  async function loadAdminAnalytics(){try{const specs=[["Members","profiles"],["Published stories","stories",q=>q.eq("status","published")],["Pending stories","stories",q=>q.eq("status","pending_review")],["Author follows","author_follows"],["Author messages","author_threads"]];const vals=await Promise.all(specs.map(async ([label,table,filter])=>{let q=supa.from(table).select("*",{count:"exact",head:true});if(filter)q=filter(q);const r=await q;if(r.error)throw r.error;return {label,count:r.count||0};}));const host=$("#adminAnalytics");if(host)host.innerHTML=`<div class="stat-grid">${vals.map(v=>`<div class="stat-card"><strong>${v.count}</strong><span>${esc(v.label)}</span></div>`).join("")}</div><p class="form-note">Counts reflect records visible to your current administrator role.</p>`;}catch(e){const host=$("#adminAnalytics");if(host)host.innerHTML=`<p class="muted">Analytics unavailable: ${esc(niceError(e))}</p>`;}}
   async function exportCatalogue(){try{const {data,error}=await supa.from("stories").select("id,author_id,title,synopsis,genre,status,published_at,created_at").eq("status","published").order("published_at",{ascending:false});if(error)throw error;const rows=data||[];const cols=["id","author_id","title","synopsis","genre","status","published_at","created_at"];const csv=[cols.join(","),...rows.map(r=>cols.map(k=>'"'+String(r[k]??"").replace(/"/g,'""')+'"').join(","))].join("\r\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`onceupon-published-catalogue-${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(url);toast("Catalogue export created.");}catch(e){toast(niceError(e),5000);}}
 
   function speakCurrentPage() {
@@ -685,6 +766,271 @@
     window.speechSynthesis.speak(utterance);
   }
 
+
+  // ---------------------------------------------------------------------------
+  // OnceUpon v2 redesign layer. Existing data workflows remain in place; these
+  // additions are deliberately additive and use a separate support-chat schema.
+  // ---------------------------------------------------------------------------
+  const THEME_NAMES = {
+    midnight:"Midnight Library", paper:"Paper & Ink", forest:"Enchanted Forest",
+    blue:"Midnight Blue", lavender:"Lavender Dreams", minimal:"Minimalist"
+  };
+  const THEME_ORDER = Object.keys(THEME_NAMES);
+  const DEFAULT_PREFS = {theme:"midnight",font:18,line:1.8,contrast:"normal",family:"serif",motion:"normal"};
+  const prefsStorageKey = () => `onceupon-prefs-v2:${userId() || "guest"}`;
+  function readPrefs() {
+    try {
+      const current=JSON.parse(localStorage.getItem(prefsStorageKey())||"null");
+      if (current) return {...DEFAULT_PREFS,...current};
+      const legacy=JSON.parse(localStorage.getItem("onceupon-prefs")||"{}");
+      const legacyTheme=legacy.theme==="light"?"paper":legacy.theme==="dark"?"midnight":legacy.theme;
+      return {...DEFAULT_PREFS,...legacy,theme:THEME_NAMES[legacyTheme]?legacyTheme:"midnight"};
+    } catch { return {...DEFAULT_PREFS}; }
+  }
+  function applyTheme() {
+    const prefs=readPrefs();
+    const theme=THEME_NAMES[prefs.theme]?prefs.theme:"midnight";
+    document.body.dataset.theme=theme;
+    document.body.classList.toggle("theme-dark",["midnight","forest","blue"].includes(theme));
+    document.body.classList.toggle("theme-light",["paper","lavender","minimal"].includes(theme));
+    document.body.classList.toggle("high-contrast",prefs.contrast==="high");
+    document.body.classList.toggle("reduce-motion",prefs.motion==="reduced");
+    document.documentElement.style.setProperty("--reader-motion",prefs.motion==="reduced"?"0":"1");
+    applyReadingPrefs();
+  }
+  function savePrefs() {
+    const prefs={
+      theme:$("#prefTheme")?.value || readPrefs().theme,
+      font:Number($("#prefFont")?.value || 18), line:Number($("#prefLine")?.value || 1.8),
+      contrast:$("#prefContrast")?.value || "normal", family:$("#prefFamily")?.value || "serif",
+      motion:$("#prefMotion")?.value || "normal"
+    };
+    localStorage.setItem(prefsStorageKey(),JSON.stringify(prefs));
+    applyTheme(); toast(`Your ${THEME_NAMES[prefs.theme]||"custom"} theme and reading preferences are saved on this device.`);
+  }
+  function updateChrome() {
+    const nav=$("#nav");
+    const offlineOnly=Boolean(session?.offlineOnly);
+    const links=offlineOnly?[{id:"offline",label:"Offline downloads"},{id:"ai",label:"Local writing helper"},{id:"faq",label:"FAQ"}]:[{id:"home",label:"Library"},{id:"authors",label:"Authors"},{id:"ai",label:"Ask AI"},{id:"faq",label:"FAQ"}];
+    if(session&&isApproved()&&!offlineOnly) links.push({id:"wallet",label:"Tokens"},{id:"offline",label:"Offline"},{id:"quests",label:"Quests"},{id:"community",label:"My library"},{id:"notifications",label:"Notifications"},{id:"help",label:"Support"},{id:"author",label:"Write"});
+    if(session&&roleIsAdmin()&&!offlineOnly) links.push({id:"admin",label:"Admin"});
+    if(session&&!offlineOnly) links.push({id:"messages",label:"Author messages"});
+    nav.innerHTML=links.map(item=>`<button data-view="${item.id}" class="${activeView===item.id?"active":""}">${item.label}</button>`).join("");
+    $("#authButton").classList.toggle("hidden",Boolean(session));
+    $("#signOutButton").classList.toggle("hidden",!session);
+    if(offlineOnly) $("#signOutButton").textContent="Exit offline"; else $("#signOutButton").textContent="Sign out";
+    $("#profileButton").classList.toggle("hidden",!session||offlineOnly);
+    $("#tokenDock").classList.toggle("hidden",!session||!isApproved()||offlineOnly);
+    if(session&&!offlineOnly){
+      const name=profile?.full_name||session.user?.email?.split("@")[0]||"Your profile";
+      $("#profileNameMini").textContent=name;
+      const photo=$("#profilePhotoMini");
+      const initials=(name.trim()[0]||"U").toUpperCase();
+      photo.alt=`${name} profile photo`;
+      photo.src=`data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="100%" height="100%" fill="#37323a"/><text x="50%" y="59%" text-anchor="middle" font-size="40" fill="#e5d0a8">${initials}</text></svg>`)}`;
+      if(profile?.avatar_path) signedAvatar(profile.avatar_path).then(url=>{if(url&&session&&profile?.avatar_path)photo.src=url;});
+      if(isApproved()) loadWallet(false).then(row=>{const n=$("#tokenDockBalance");if(n)n.textContent=Number(row?.available_tokens||0).toLocaleString("en-IN");});
+    } else { $("#tokenDockBalance").textContent="—"; }
+  }
+
+  // Local offline copies are created only after the server's get_story_page RPC
+  // confirms that the current user is entitled to read the page. This never
+  // unlocks pages and never deducts tokens.
+  let offlineDBPromise=null;
+  function offlineDB(){
+    if(!window.indexedDB) return Promise.reject(new Error("Offline storage is unavailable in this browser."));
+    if(offlineDBPromise)return offlineDBPromise;
+    offlineDBPromise=new Promise((resolve,reject)=>{
+      const req=indexedDB.open("onceupon-offline-v3",1);
+      req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("pages")){const st=db.createObjectStore("pages",{keyPath:["owner_id","page_id"]});st.createIndex("owner_id","owner_id");st.createIndex("story_id","story_id");}};
+      req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error||new Error("Could not open offline library."));
+    });
+    return offlineDBPromise;
+  }
+  async function offlinePut(row){const db=await offlineDB();return new Promise((resolve,reject)=>{const tx=db.transaction("pages","readwrite");tx.objectStore("pages").put(row);tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error);});}
+  async function offlineGet(pageId){const db=await offlineDB();return new Promise((resolve,reject)=>{const r=db.transaction("pages","readonly").objectStore("pages").get([userId(),String(pageId)]);r.onsuccess=()=>resolve(r.result||null);r.onerror=()=>reject(r.error);});}
+  async function offlineAll(){const db=await offlineDB();return new Promise((resolve,reject)=>{const r=db.transaction("pages","readonly").objectStore("pages").getAll();r.onsuccess=()=>resolve(r.result||[]);r.onerror=()=>reject(r.error);});}
+  async function offlineDeleteStory(storyId){const db=await offlineDB();const rows=(await offlineAll()).filter(x=>x.owner_id===userId()&&x.story_id===String(storyId));return new Promise((resolve,reject)=>{const tx=db.transaction("pages","readwrite"),st=tx.objectStore("pages");rows.forEach(x=>st.delete([userId(),x.page_id]));tx.oncomplete=()=>resolve(rows.length);tx.onerror=()=>reject(tx.error);});}
+  async function downloadCurrentStory(){
+    if(!session||!isApproved())return toast("Sign in with an approved account before downloading pages.");
+    if(!currentStory)return toast("Open a story first.");
+    const button=$('[data-action="download-current-story"]');if(button){button.disabled=true;button.textContent="Checking access…";}
+    let saved=0,locked=0,failed=0;
+    try{
+      for(const ch of currentChapters){
+        const pages=await rpc("get_story_chapter_pages",{p_chapter_id:ch.chapter_id});
+        for(const pg of (Array.isArray(pages)?pages:[])){
+          try{
+            const raw=await rpc("get_story_page",{p_page_id:pg.page_id});
+            const row=Array.isArray(raw)?raw[0]:raw;
+            if(!row||typeof row.content!=="string")throw new Error("No page content returned");
+            await offlinePut({page_id:String(pg.page_id),owner_id:userId(),story_id:String(currentStory.story_id),story_title:currentStory.title,chapter_id:String(ch.chapter_id),chapter_title:ch.chapter_title,page_number:Number(pg.page_number),content:row.content,saved_at:new Date().toISOString()});saved++;
+          }catch(err){if(/locked|unlock|permission|not allowed|access/i.test(niceError(err)))locked++;else failed++;}
+        }
+      }
+      toast(`Offline copy saved: ${saved} page(s). ${locked} locked page(s) were skipped; no tokens were spent.`,6500);
+      if(failed)toast(`${failed} page(s) could not be downloaded. Check your connection and try again.`,5000);
+    }catch(e){toast(niceError(e),5000);}
+    finally{if(button){button.disabled=false;button.textContent="Download unlocked pages for offline";}}
+  }
+  async function renderOfflineView(){
+    main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your device library</p><h2>Offline downloads</h2><p>Only pages that OnceUpon confirmed you could already read are stored here. Downloading never unlocks a page or spends tokens.</p></div>${session?.offlineOnly?`<div class="notice">Offline mode is active. Saved pages are available on this device; account changes, token updates, support and live catalogue features require an internet connection.</div>`:""}<div id="offlineHost" class="loading">Opening your offline library…</div></section>`;
+    try{
+      if(!session)return $("#offlineHost").innerHTML=`<div class="notice">Sign in to see the offline copies saved for your account on this device.</div>`;
+      const rows=(await offlineAll()).filter(x=>x.owner_id===userId()).sort((a,b)=>a.story_title.localeCompare(b.story_title)||a.page_number-b.page_number);
+      const groups=new Map();rows.forEach(r=>{if(!groups.has(r.story_id))groups.set(r.story_id,{title:r.story_title,rows:[]});groups.get(r.story_id).rows.push(r);});
+      $("#offlineHost").innerHTML=groups.size?[...groups.entries()].map(([id,g])=>`<div class="panel offline-story"><div class="section-heading"><div><h3>${esc(g.title)}</h3><p class="muted">${g.rows.length} saved page(s)</p></div><button class="button button-outline button-xs" data-offline-delete="${esc(id)}">Remove download</button></div><div class="offline-page-list">${g.rows.map(r=>`<button class="offline-page" data-offline-page="${esc(r.page_id)}"><span>${esc(r.chapter_title)} · Page ${r.page_number}</span><small>Saved ${dateText(r.saved_at)}</small></button>`).join("")}</div></div>`).join(""):`<div class="empty-state"><h3>No offline stories yet</h3><p>Open a story while online and choose “Download unlocked pages for offline”.</p><button class="button" data-view="home">Explore the library</button></div>`;
+    }catch(e){$("#offlineHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}</div>`;}
+  }
+  async function openOfflinePage(pageId){
+    try{const row=await offlineGet(pageId);if(!row||row.owner_id!==userId())throw new Error("This offline page is not available for the signed-in account.");
+      main.innerHTML=`<section class="page-wrap"><button class="text-button" data-view="offline">← Offline downloads</button><div class="page-heading"><p class="eyebrow">Saved on this device</p><h2>${esc(row.story_title)}</h2><p class="muted">${esc(row.chapter_title)} · Page ${row.page_number}</p></div><article class="reader-content offline-reader">${esc(row.content)}</article><p class="form-note">Offline copy saved ${dateText(row.saved_at)}. Access is based on your permissions at download time; keep your device private.</p><div class="form-actions"><button class="button button-outline" data-view="offline">Back to downloads</button></div></section>`;
+    }catch(e){toast(niceError(e),5000);}
+  }
+  async function openPage(pageId){
+    if(!session||!isApproved())return toast("Reading access is not active for this account.");
+    const page=currentPages.find(item=>String(item.page_id)===String(pageId));if(!page)return;
+    currentPage=page;const pane=$("#readerPane");if(pane)pane.innerHTML=`<div class="loading">Opening page…</div>`;
+    try{
+      const raw=await rpc("get_story_page",{p_page_id:page.page_id}),row=Array.isArray(raw)?raw[0]:raw;
+      if(!row)throw new Error("Page content was not returned.");renderReaderPage(row,page);
+      const pw=await supa.from("reading_progress").upsert({user_id:userId(),story_id:currentStory.story_id,chapter_id:currentChapter.chapter_id,page_id:page.page_id,last_read_at:new Date().toISOString()},{onConflict:"user_id,story_id"});if(pw.error)console.warn("Reading progress:",pw.error.message);
+    }catch(error){
+      try{const cached=await offlineGet(page.page_id);if(cached&&cached.owner_id===userId()){renderReaderPage({content:cached.content,tokens_spent:0},page,true);toast("Opened your saved offline copy.");}
+      else throw error;}catch{const cost=Math.max(0,Number(page.token_cost||0));if(pane)pane.innerHTML=`<div class="notice">This page is not currently available online or in your offline downloads. ${cost?`Unlock cost: ${cost} tokens.`:""}</div><div class="panel"><button class="button" data-unlock-page="${esc(page.page_id)}">${cost===0?"Unlock for free":`Unlock for ${cost} tokens`}</button><p class="form-note">${esc(niceError(error))}</p></div>`;}
+    }
+    renderChapterPanelButtonsOnly();
+  }
+  function renderReaderPage(row,meta,offline=false){
+    if(window.speechSynthesis)window.speechSynthesis.cancel();const pane=$("#readerPane");if(!pane)return;
+    pane.innerHTML=`<div class="panel reader-panel"><div class="section-heading"><div><p class="eyebrow">${offline?"Offline copy":meta.is_free?"Free page":"Unlocked page"}</p><h3>Page ${Number(meta.page_number||0)}</h3></div><small class="muted">${offline?"Saved on this device":`${Number(row.tokens_spent||0)} tokens spent`}</small></div><article class="reader-content" id="readerText">${esc(String(row.content??""))}</article>${session&&isApproved()&&!offline?`<form id="commentForm" class="form-stack"><label class="field">Comment on this page<textarea name="comment_text" maxlength="2000" required></textarea></label><button class="button button-outline button-xs">Post comment</button></form>`:""}<div class="form-actions"><button class="button button-outline button-xs" data-action="read-aloud">Read aloud</button><button class="button button-outline button-xs" data-action="stop-reading">Stop audio</button><button class="button button-outline button-xs" data-action="font-down">A−</button><button class="button button-outline button-xs" data-action="font-up">A+</button><button class="button button-outline button-xs" data-action="line-spacing">Line spacing</button></div></div>`;
+    applyReadingPrefs();
+  }
+
+  async function removeProfilePhoto(){
+    if(!profile?.avatar_path)return toast("There is no profile photo to remove.");
+    try{
+      const path=profile.avatar_path;
+      const {error}=await supa.from("profiles").update({avatar_path:null,updated_at:new Date().toISOString()}).eq("id",userId());
+      if(error)throw error;
+      try{await supa.storage.from("profile-photos").remove([path]);}catch(storageError){console.info("Old profile image could not be removed from storage:",niceError(storageError));}
+      toast("Profile photo removed.");await refreshSessionData();
+    }catch(e){toast(niceError(e),5000);}
+  }
+
+  // Built-in private support chat is intentionally distinct from author DMs.
+  async function renderHelpView(){
+    main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Private support desk</p><h2>Contact Admin</h2><p>Send a message to the OnceUpon administration team and continue the conversation here. This is an in-app chat, not an email link.</p></div><div id="supportHost" class="loading">Loading your support inbox…</div><div class="panel"><h3>Report a concern</h3><form id="reportForm" class="form-stack"><label class="field">Target type<select name="target_type"><option value="story">Story</option><option value="comment">Comment</option><option value="review">Review</option><option value="user">User</option></select></label><label class="field">Target ID<input name="target_id" required></label><label class="field">Reason<input name="reason" maxlength="160" required></label><label class="field">Details<textarea name="details" maxlength="3000"></textarea></label><button class="button button-outline">Submit report</button></form></div></section>`;
+    if(!session){$("#supportHost").innerHTML=`<div class="notice">Please sign in to start a private support conversation. For general enquiries, you can also email <a href="mailto:onceupon.admin@gmail.com">onceupon.admin@gmail.com</a>.</div>`;return;}
+    try{const {data,error}=await supa.from("support_conversations").select("id,subject,status,created_at,updated_at").eq("user_id",userId()).order("updated_at",{ascending:false});if(error)throw error;
+      $("#supportHost").innerHTML=`<div class="panel"><h3>Start a new conversation</h3><form id="supportConversationForm" class="form-stack"><label class="field">Subject<input name="subject" maxlength="160" required placeholder="What do you need help with?"></label><label class="field">Message<textarea name="body" maxlength="5000" required placeholder="Describe the issue or question…"></textarea></label><button class="button">Start support chat</button></form></div><div class="panel"><h3>Your conversations</h3><div class="item-list">${(data||[]).map(t=>`<div class="list-item"><div><strong>${esc(t.subject)}</strong><small>${esc(t.status)} · Updated ${dateText(t.updated_at)}</small></div><button class="button button-outline button-xs" data-support-open="${esc(t.id)}">Open chat</button></div>`).join("")||`<p class="muted">No support conversations yet.</p>`}</div></div>`;
+    }catch(e){$("#supportHost").innerHTML=`<div class="notice danger-note">${esc(niceError(e))}<p>Apply the new SUPPORT_AI_OFFLINE_UPGRADE.sql migration to enable in-app support chat.</p></div>`;}
+  }
+  async function createSupportConversation(form){
+    try{const fd=new FormData(form),subject=String(fd.get("subject")||"").trim(),body=String(fd.get("body")||"").trim();if(!subject||!body)throw new Error("Enter a subject and message.");
+      const {data,error}=await supa.from("support_conversations").insert({user_id:userId(),subject,status:"open"}).select("id").single();if(error)throw error;
+      const msg=await supa.from("support_chat_messages").insert({conversation_id:data.id,sender_id:userId(),body});if(msg.error)throw msg.error;
+      toast("Support conversation started.");await openSupportConversation(data.id,false);
+    }catch(e){toast(niceError(e),5000);}
+  }
+  async function openSupportConversation(id,adminMode=false){
+    try{const {data:t,error}=await supa.from("support_conversations").select("id,user_id,subject,status,created_at,updated_at").eq("id",id).single();if(error)throw error;
+      const q=await supa.from("support_chat_messages").select("id,sender_id,body,created_at").eq("conversation_id",id).order("created_at");if(q.error)throw q.error;
+      main.innerHTML=`<section class="page-wrap"><button class="text-button" data-view="${adminMode?"admin":"help"}">← ${adminMode?"Administration":"Support inbox"}</button><div class="page-heading"><p class="eyebrow">${adminMode?"Administrator support inbox":"Private support chat"}</p><h2>${esc(t.subject)}</h2><p class="muted">${esc(t.status)} · ${adminMode?`User ${esc(t.user_id)}`:"Only you and the OnceUpon admin team can see this chat."}</p></div><div class="panel support-chat"><div class="section-heading"><strong>Messages</strong><button class="button button-outline button-xs" type="button" data-support-refresh="${esc(id)}" data-support-admin="${adminMode}">Refresh messages</button></div><div class="chat-transcript">${(q.data||[]).map(m=>`<div class="message-bubble ${m.sender_id===userId()?"mine":""}">${esc(m.body)}<div class="message-meta">${m.sender_id===userId()?"You":adminMode?"Reader":"OnceUpon Admin"} · ${dateText(m.created_at)}</div></div>`).join("")||`<p class="muted">No messages yet.</p>`}</div><form id="supportChatForm" class="form-stack"><input type="hidden" name="conversation_id" value="${esc(id)}"><label class="field">Message<textarea name="body" maxlength="5000" required ${t.status==="closed"?"disabled":""}></textarea></label><button class="button" ${t.status==="closed"?"disabled":""}>Send message</button></form><div class="form-actions">${t.status==="open"?`<button class="button button-outline button-xs" data-support-close="${esc(id)}" data-support-admin="${adminMode}">Close conversation</button>`:"<span class='tag'>Closed</span>"}</div></div></section>`;
+      const transcript=$(".chat-transcript");if(transcript)transcript.scrollTop=transcript.scrollHeight;
+      if(supportRefreshTimer)clearInterval(supportRefreshTimer);
+      supportRefreshTimer=setInterval(async()=>{
+        const activeForm=$("#supportChatForm"),currentId=activeForm?.elements?.conversation_id?.value;
+        if(currentId!==id){clearInterval(supportRefreshTimer);supportRefreshTimer=null;return;}
+        try{const fresh=await supa.from("support_chat_messages").select("id,sender_id,body,created_at").eq("conversation_id",id).order("created_at");if(!fresh.error){const box=$(".chat-transcript");if(box){const atBottom=box.scrollHeight-box.scrollTop-box.clientHeight<70;box.innerHTML=(fresh.data||[]).map(m=>`<div class="message-bubble ${m.sender_id===userId()?"mine":""}">${esc(m.body)}<div class="message-meta">${m.sender_id===userId()?"You":adminMode?"Reader":"OnceUpon Admin"} · ${dateText(m.created_at)}</div></div>`).join("")||`<p class="muted">No messages yet.</p>`;if(atBottom)box.scrollTop=box.scrollHeight;}}}catch{}
+      },15000);
+    }catch(e){toast(niceError(e),5000);}
+  }
+  async function sendSupportChatMessage(form){
+    try{const fd=new FormData(form),id=String(fd.get("conversation_id")),body=String(fd.get("body")||"").trim();if(!body)return;
+      const {error}=await supa.from("support_chat_messages").insert({conversation_id:id,sender_id:userId(),body});if(error)throw error;
+      await supa.from("support_conversations").update({updated_at:new Date().toISOString()}).eq("id",id);await openSupportConversation(id,roleIsAdmin());
+    }catch(e){toast(niceError(e),5000);}
+  }
+  async function closeSupportConversation(id,adminMode){try{const {error}=await supa.from("support_conversations").update({status:"closed",closed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq("id",id);if(error)throw error;toast("Conversation closed.");if(adminMode)await renderAdminView();else await renderHelpView();}catch(e){toast(niceError(e),5000);}}
+  async function loadSupportAdminInbox(){
+    const host=$("#adminSupportInbox");if(!host)return;
+    try{const {data,error}=await supa.from("support_conversations").select("id,user_id,subject,status,created_at,updated_at").order("updated_at",{ascending:false}).limit(100);if(error)throw error;
+      host.innerHTML=(data||[]).map(t=>`<div class="list-item"><div><strong>${esc(t.subject)}</strong><small>${esc(t.status)} · User ${esc(t.user_id)} · ${dateText(t.updated_at)}</small></div><button class="button button-outline button-xs" data-support-open="${esc(t.id)}" data-support-admin="true">Open inbox chat</button></div>`).join("")||`<p class="muted">No support conversations yet.</p>`;
+    }catch(e){host.innerHTML=`<div class="notice danger-note">${esc(niceError(e))}</div>`;}
+  }
+
+  async function loadAIAdminSettings(){
+    const host=$("#adminAISettings");if(!host)return;
+    try{const [{data,error},{count:usageCount}]=await Promise.all([supa.from("ai_feature_settings").select("hosted_enabled,daily_request_limit,prompt_limit,updated_at").eq("id",true).maybeSingle(),supa.from("ai_usage_events").select("id",{count:"exact",head:true})]);if(error)throw error;
+      const row=data||{hosted_enabled:false,daily_request_limit:10,prompt_limit:4000};
+      host.innerHTML=`<div class="stat-grid"><div class="stat-card"><strong>${Number(usageCount||0)}</strong><span>Recorded hosted AI requests</span></div><div class="stat-card"><strong>${Number(row.daily_request_limit)||10}</strong><span>Daily per-user request limit</span></div></div><div class="section-heading"><div><strong>Hosted generative AI</strong><p class="muted">Hosted AI is off by default until a provider key and Edge Function are configured.</p></div><span class="tag">${row.hosted_enabled?"Enabled in settings":"Disabled"}</span></div><form id="aiAdminSettingsForm" class="form-grid"><label class="field">Hosted AI<select name="hosted_enabled"><option value="false" ${!row.hosted_enabled?"selected":""}>Disabled</option><option value="true" ${row.hosted_enabled?"selected":""}>Enabled</option></select></label><label class="field">Requests per user per day<input name="daily_request_limit" type="number" min="1" max="100" value="${Number(row.daily_request_limit)||10}"></label><label class="field">Maximum prompt characters<input name="prompt_limit" type="number" min="500" max="8000" step="100" value="${Number(row.prompt_limit)||4000}"></label><div class="form-actions"><button class="button" type="submit">Save AI limits</button></div></form><p class="form-note">Never put provider keys here. Add AI_PROVIDER_API_KEY, AI_PROVIDER_BASE_URL and AI_PROVIDER_MODEL as Supabase Edge Function secrets.</p>`;
+    }catch(e){host.innerHTML=`<div class="notice danger-note">${esc(niceError(e))}<p>Apply SUPPORT_AI_OFFLINE_UPGRADE.sql before enabling hosted AI.</p></div>`;}
+  }
+  async function saveAIAdminSettings(form){
+    if(!roleIsAdmin())return toast("Administrator access required.");
+    try{const f=new FormData(form),enabled=f.get("hosted_enabled")==="true",daily=Math.max(1,Math.min(100,Number(f.get("daily_request_limit")||10))),limit=Math.max(500,Math.min(8000,Number(f.get("prompt_limit")||4000)));
+      const {error}=await supa.from("ai_feature_settings").upsert({id:true,hosted_enabled:enabled,daily_request_limit:daily,prompt_limit:limit,updated_by:userId(),updated_at:new Date().toISOString()},{onConflict:"id"});if(error)throw error;
+      toast("AI settings saved. Hosted calls still require valid Edge Function secrets.");await loadAIAdminSettings();
+    }catch(e){toast(niceError(e),5000);}
+  }
+
+  function localAIReply(prompt){
+    const q=prompt.toLowerCase();
+    if(/recommend|suggest|find|read|story/.test(q)){const terms=q.split(/\W+/).filter(w=>w.length>3);const found=catalogue.filter(s=>terms.some(t=>[s.title,s.synopsis,s.genre,...(s.tags||[])].join(" ").toLowerCase().includes(t))).slice(0,5);return found.length?"Catalogue matches:\n"+found.map(s=>`• ${s.title} — ${s.genre||"Fiction"}: ${s.synopsis||"Explore this story on OnceUpon."}`).join("\n"):"I couldn't find a precise catalogue match. Try a genre, mood, or theme such as mystery, fantasy, science fiction, or coming-of-age.";}
+    if(/character|protagonist|villain/.test(q))return "Character workshop\n1. Give the character a concrete goal.\n2. Add a contradiction between what they want and what they need.\n3. Decide what belief will be challenged.\n4. Let choices reveal their personality.\n5. Make the ending change how they see themselves.";
+    if(/plot|premise|brainstorm|idea/.test(q))return "A practical plot exercise: write one sentence for the protagonist's goal, one for the obstacle, and one for the consequence of failure. Then design three turning points: a discovery, a difficult choice, and an irreversible consequence. Keep each event caused by a character's decision.";
+    if(/feedback|improve|review|writing|paragraph|rewrite/.test(q))return "Revision checklist\n• Clarity: can readers follow who acts and why?\n• Scene purpose: what changes by the end?\n• Specificity: replace vague descriptions with concrete details.\n• Voice: make each speaker recognisable.\n• Pacing: balance action, dialogue and reflection.\nFor detailed feedback, connect the hosted model in Admin → AI settings.";
+    return "I can help search the public catalogue and offer structured writing exercises. For open-ended drafting, rewriting, translation and detailed feedback, enable the hosted AI option after the administrator configures a free provider. This local fallback does not pretend to be a generative model.";
+  }
+  function renderAIView(){
+    activeView="ai";updateChrome();
+    main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">A creative companion</p><h2>Ask OnceUpon AI</h2><p>Use the built-in local helper without sending your prompts anywhere, or choose hosted generative AI when it has been configured by the administrator.</p></div><div class="panel assistant-panel"><div id="aiStatus" class="ai-status"><span class="status-dot"></span> Checking hosted AI availability…</div><div id="aiReply" class="assistant-reply">Hello! Ask me about story ideas, characters, structure, revision or the public OnceUpon catalogue.</div><form id="aiForm" class="form-stack"><label class="field">Your question<textarea name="prompt" maxlength="8000" required placeholder="What are you working on?" rows="5"></textarea></label><label class="check-row"><input type="checkbox" name="use_hosted" id="useHostedAI"> Use hosted generative AI (sends this prompt to the configured AI provider)</label><label class="check-row"><input type="checkbox" name="consent_external" id="consentExternal"> I consent to sending this prompt. I have removed passwords, contact details and other private information.</label><button class="button" type="submit">Ask OnceUpon AI</button></form><p class="form-note">AI is separate from reading tokens. Prompts are not stored by OnceUpon. Hosted availability and free quotas depend on the external provider.</p></div></section>`;
+    if(supa)supa.from("ai_feature_settings").select("hosted_enabled").eq("id",true).maybeSingle().then(({data,error})=>{const host=$("#aiStatus");if(!host)return;host.innerHTML=!error&&data?.hosted_enabled?`<span class="status-dot status-on"></span> Hosted AI is enabled in platform settings. Provider secrets must also be configured.`:`<span class="status-dot"></span> Local assistant available · Hosted AI not configured or disabled.`;}).catch(()=>{});
+  }
+  async function runAIResponse(form){
+    const fd=new FormData(form||$("#aiForm")),prompt=String(fd.get("prompt")||"").trim();if(!prompt)return;
+    const node=$("#aiReply"),button=$("#aiForm button[type=submit]");if(button){button.disabled=true;button.textContent="Thinking…";}if(node)node.textContent="Working on your question…";
+    let reply="",mode="local";
+    const useHosted=fd.get("use_hosted")==="on",consent=fd.get("consent_external")==="on";
+    if(useHosted&&!consent){if(node)node.textContent="To use hosted AI, first confirm that you consent to sending this prompt. Otherwise uncheck hosted AI to use the private local helper.";if(button){button.disabled=false;button.textContent="Ask OnceUpon AI";}return;}
+    if(useHosted&&consent){
+      if(!session||!isApproved()){reply="Hosted AI requires a signed-in, approved account. You can still use the local helper below.";}
+      else try{const {data,error}=await supa.functions.invoke("onceupon-ai",{body:{prompt}});if(error)throw error;if(!data?.reply)throw new Error(data?.error||"The hosted model returned no reply.");reply=data.reply;mode="hosted";}
+      catch(e){reply=`Hosted AI is currently unavailable (${niceError(e)}).\n\nLocal fallback:\n${localAIReply(prompt)}`;}
+    }else reply=localAIReply(prompt);
+    if(node){node.textContent=reply;node.dataset.mode=mode;}
+    if(button){button.disabled=false;button.textContent="Ask OnceUpon AI";}
+  }
+
+  async function renderAdminView(){
+    if(!roleIsAdmin())return toast("Administrator access is required.");
+    // Reuse the existing moderation and approval workflows, then add the new
+    // support and AI control rooms without altering the existing data model.
+    await renderAdminViewLegacy();
+    const host=$("#adminPane");if(!host)return;
+    const basePanels=[...host.querySelectorAll(":scope > .panel")];
+    const adminSectionNames=roles.includes("owner")?["Members","Author applications","Story review","Analytics","Backup & exports","Role management","Quests","Quest evidence","Moderation","Reports & legacy support"]:["Members","Author applications","Story review","Analytics","Backup & exports","Quests","Quest evidence","Moderation","Reports & legacy support"];
+    basePanels.forEach((panel,i)=>{panel.id=`admin-section-${i}`;});
+    host.insertAdjacentHTML("afterbegin",`<div class="admin-command-bar"><input id="adminUserFilter" class="input" type="search" placeholder="Filter members by name or UID…" aria-label="Filter member list"><div class="admin-jump-links">${adminSectionNames.map((name,i)=>`<button type="button" data-admin-target="admin-section-${i}">${name}</button>`).join("")}<button type="button" data-admin-target="admin-support-section">Support inbox</button><button type="button" data-admin-target="admin-ai-section">AI settings</button></div></div>`);
+    host.insertAdjacentHTML("beforeend",`<div class="panel admin-control-panel" id="admin-support-section"><div class="page-heading compact"><p class="eyebrow">Operations</p><h3>Support inbox</h3><p class="muted">Private reader-to-administrator conversations. This is separate from author messages.</p></div><div id="adminSupportInbox" class="loading">Loading support conversations…</div></div><div class="panel admin-control-panel" id="admin-ai-section"><div class="page-heading compact"><p class="eyebrow">AI configuration</p><h3>Hosted AI settings</h3><p class="muted">Control feature availability and per-user limits. Provider secrets stay in Supabase Edge Function configuration.</p></div><div id="adminAISettings" class="loading">Loading AI settings…</div></div><div class="panel admin-control-panel"><div class="page-heading compact"><p class="eyebrow">Platform safety</p><h3>Operational safeguards</h3></div><ul class="admin-safeguards"><li>Owner-only role grants remain restricted to the Owner role.</li><li>Reader and author messaging are separate from support.</li><li>Database exports must be made through Supabase backup tools; browser CSV export excludes private story content.</li><li>Never paste a service-role key into browser configuration or GitHub.</li></ul><button class="button button-outline button-xs" data-action="export-catalogue">Export published catalogue metadata</button></div>`);
+    if(roles.includes("owner"))host.insertAdjacentHTML("beforeend",`<div class="panel admin-control-panel"><h3>Revoke a role</h3><p class="muted">Owner-only. You cannot revoke your own Owner role from this form.</p><form id="removeRoleForm" class="form-grid"><label class="field">User UID<input name="user_id" required></label><label class="field">Role<select name="role"><option value="admin">Admin</option><option value="author">Author</option><option value="reader">Reader</option></select></label><div class="form-actions"><button class="button button-outline" type="submit">Revoke role</button></div></form></div>`);
+    loadSupportAdminInbox();loadAIAdminSettings();
+  }
+  async function removeRole(form){if(!roles.includes("owner"))return toast("Only the Owner can revoke roles.");try{const f=new FormData(form),id=String(f.get("user_id")).trim(),role=String(f.get("role"));if(id===userId()&&role==="owner")throw new Error("You cannot revoke your own Owner role here.");const {error}=await supa.from("user_roles").delete().eq("user_id",id).eq("role",role);if(error)throw error;toast("Role revoked.");form.reset();await renderAdminView();}catch(e){toast(niceError(e),5000);}}
+
+  async function renderAccountView(){
+    const p=profile||{},prefs=readPrefs();
+    main.innerHTML=`<section class="page-wrap"><div class="page-heading"><p class="eyebrow">Your OnceUpon identity</p><h2>Profile & settings</h2><p>Your profile, reading preferences and visual theme live together here.</p></div><div class="panel"><div class="profile-header"><img id="profileAvatar" class="avatar" alt="Profile photo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect width='100%25' height='100%25' fill='%2330313c'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' font-size='40' fill='%23d7c19a'%3E${esc((p.full_name||"U").slice(0,1).toUpperCase())}%3C/text%3E%3C/svg%3E"><div><h3>${esc(p.full_name||"Your profile")}</h3><p class="muted">${esc(session?.user?.email||"")}</p><span class="tag">${esc(p.approval_status||"pending")} · ${roles.map(esc).join(", ")||"reader"}</span></div></div><form id="profileForm" class="form-grid" style="margin-top:18px"><label class="field">Display name<input name="full_name" maxlength="100" required value="${esc(p.full_name||"")}"></label><label class="field">Phone (optional)<input name="phone" type="tel" maxlength="40" value="${esc(p.phone||"")}"></label><label class="field">Profile photo (JPG, PNG or WebP; max 5 MB)<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp"></label><div class="form-actions"><button class="button button-outline button-xs" type="button" data-action="remove-avatar" ${p.avatar_path?"":"disabled"}>Remove current photo</button></div><label class="field" style="grid-column:1/-1">Bio<textarea name="bio" maxlength="1200">${esc(p.bio||"")}</textarea></label><label class="field">Instagram profile URL<input name="instagram_url" type="url" value="${esc(p.instagram_url||"")}"></label><label class="field">Profile visibility<select name="is_profile_public"><option value="true" ${p.is_profile_public!==false?"selected":""}>Public</option><option value="false" ${p.is_profile_public===false?"selected":""}>Private</option></select></label><label class="field">Online visibility<select name="online_visible"><option value="false" ${!p.online_visible?"selected":""}>Hidden</option><option value="true" ${p.online_visible?"selected":""}>Show when active</option></select></label><div class="form-actions" style="grid-column:1/-1"><button class="button" type="submit">Save profile</button></div></form></div><div class="panel"><div class="page-heading compact"><p class="eyebrow">Make it yours</p><h3>Customise your theme</h3><p class="muted">Choose one of six visual themes. Your choice is saved separately for this account on this device.</p></div><div class="theme-choice-grid">${Object.entries(THEME_NAMES).map(([key,label])=>`<label class="theme-choice theme-swatch-${key}"><input type="radio" name="profile-theme" value="${key}" ${prefs.theme===key?"checked":""}><span class="theme-swatch"><i></i><i></i><i></i></span><strong>${label}</strong><small>${key==="midnight"?"Charcoal · antique gold":key==="paper"?"Warm ivory · walnut":key==="forest"?"Deep green · soft brass":key==="blue"?"Navy · silver":key==="lavender"?"Lavender · plum": "Black · white · editorial"}</small></label>`).join("")}</div><div class="form-grid" style="margin-top:18px"><label class="field">Reading font<select id="prefFamily"><option value="serif">Literary serif</option><option value="sans">Modern sans-serif</option></select></label><label class="field">Text size<select id="prefFont"><option value="16">Small</option><option value="18">Regular</option><option value="20">Large</option><option value="22">Extra large</option><option value="24">Extra large +</option></select></label><label class="field">Line spacing<select id="prefLine"><option value="1.6">Compact</option><option value="1.8">Comfortable</option><option value="2">Spacious</option></select></label><label class="field">Contrast<select id="prefContrast"><option value="normal">Normal</option><option value="high">High contrast</option></select></label><label class="field">Motion<select id="prefMotion"><option value="normal">Allow subtle animation</option><option value="reduced">Reduce motion</option></select></label></div><div class="form-actions"><button class="button" data-action="save-preferences">Save appearance</button><button class="button button-outline" data-view="offline">Manage offline downloads</button></div></div><div class="panel"><h3>Account security</h3><p class="muted">Email changes require confirmation from Supabase. Use a strong, unique password.</p><form id="emailForm" class="form-grid"><label class="field">New email<input name="email" type="email" required value="${esc(session?.user?.email||"")}"></label><div class="form-actions"><button class="button button-outline" type="submit">Update email</button></div></form><form id="passwordForm" class="form-grid"><label class="field">New password<input name="password" type="password" minlength="8" autocomplete="new-password" required></label><div class="form-actions"><button class="button button-outline" type="submit">Change password</button></div></form><div class="form-actions"><button class="button button-outline" data-view="messages">Author messages</button><button class="button button-outline" data-view="help">Contact Admin</button><button class="button button-quiet" data-action="sign-out">Sign out</button></div></div></section>`;
+    $("#prefFamily").value=prefs.family;$("#prefFont").value=String(prefs.font);$("#prefLine").value=String(prefs.line);$("#prefContrast").value=prefs.contrast;$("#prefMotion").value=prefs.motion;
+    if(p.avatar_path){const url=await signedAvatar(p.avatar_path);if(url&&$("#profileAvatar"))$("#profileAvatar").src=url;}
+  }
+
+  // ---------------------------------------------------------------------------
+  // Admin legacy renderer is retained unchanged as a safe source for the
+  // existing approvals/quest/moderation tools. The redesigned wrapper extends it.
+  // ---------------------------------------------------------------------------
+
   document.addEventListener("click", async event => {
     const target = event.target.closest("button");
     if (!target) return;
@@ -693,6 +1039,12 @@
     if (target.dataset.openStory) return openStory(target.dataset.openStory);
     if (target.dataset.openAuthor) { window.__onceuponAuthorId=target.dataset.openAuthor; activeView="author-profile"; return renderAuthorProfileView(target.dataset.openAuthor); }
     if (target.dataset.openThread) { activeThreadId=target.dataset.openThread; return renderThreadView(activeThreadId); }
+    if (target.dataset.supportOpen) return openSupportConversation(target.dataset.supportOpen,target.dataset.supportAdmin==="true");
+    if (target.dataset.supportRefresh) return openSupportConversation(target.dataset.supportRefresh,target.dataset.supportAdmin==="true");
+    if (target.dataset.supportClose) return closeSupportConversation(target.dataset.supportClose,target.dataset.supportAdmin==="true");
+    if (target.dataset.offlinePage) return openOfflinePage(target.dataset.offlinePage);
+    if (target.dataset.offlineDelete) { if(confirm("Remove all downloaded pages for this story from this device?")){await offlineDeleteStory(target.dataset.offlineDelete);await renderOfflineView();} return; }
+    if (target.dataset.adminTarget) { document.getElementById(target.dataset.adminTarget)?.scrollIntoView({behavior:"smooth",block:"start"}); return; }
     if (target.dataset.openChapter) return openChapter(target.dataset.openChapter);
     if (target.dataset.openPage) return openPage(target.dataset.openPage);
     if (target.dataset.unlockPage) return unlockPage(target.dataset.unlockPage);
@@ -708,6 +1060,8 @@
     if (target.dataset.reportResolve) return resolveReport(target.dataset.reportResolve);
     if (target.dataset.supportReply) return replySupport(target.dataset.supportReply);
     if (target.dataset.notificationRead) return markNotification(target.dataset.notificationRead);
+    if (target.hasAttribute("data-notification-all-read")) { const {error}=await supa.from("notifications").update({is_read:true}).eq("user_id",userId()).eq("is_read",false); if(error)toast(niceError(error));else await renderNotificationsView(); return; }
+    if (target.dataset.inboxFilter) { const rows=window.__onceuponInboxRows||[]; const f=target.dataset.inboxFilter; const visible=rows.filter(r=>f==="all"||r.kind===f); $("#messagesHost").innerHTML=visible.map(r=>`<div class="list-item"><div><strong><span class="tag">[${r.kind.toUpperCase()}]</span> ${esc(r.subject)}</strong><small>${esc(r.status)} · ${dateText(r.updated_at)}</small></div><button class="button button-outline button-xs" ${r.kind==="admin"?`data-support-open="${esc(r.id)}"`:`data-open-thread="${esc(r.id)}"`}>Open</button></div>`).join("")||`<div class="empty-state">No conversations here yet.</div>`; return; }
     if (target.dataset.evidence) { try { const {data,error}=await supa.storage.from("quest-submissions").createSignedUrl(target.dataset.evidence,300); if(error)throw error; window.open(data.signedUrl,"_blank","noopener"); } catch(e){toast(niceError(e),5000);} return; }
     if (target.dataset.editStory) return editStory(target.dataset.editStory);
     if (target.dataset.editChapter) return editChapter(target.dataset.editChapter,target.dataset.chapterTitle||"chapter");
@@ -730,6 +1084,9 @@
     else if (action === "export-catalogue") await exportCatalogue();
     else if (action === "install-app") await installApp();
     else if (action === "ai-suggest") runAIResponse();
+    else if (action === "download-current-story") await downloadCurrentStory();
+    else if (action === "sign-out") await signOut();
+    else if (action === "remove-avatar") await removeProfilePhoto();
     else if (action === "read-aloud") speakCurrentPage();
     else if (action === "stop-reading") { if (window.speechSynthesis) window.speechSynthesis.cancel(); toast("Read-aloud stopped."); }
     else if (action === "font-up" || action === "font-down" || action === "line-spacing") {
@@ -766,17 +1123,28 @@
     if (form.id === "authorMessageForm") return sendAuthorMessage(form);
     if (form.id === "startThreadForm") return createAuthorThread(form);
     if (form.id === "aiForm") return runAIResponse(form);
+    if (form.id === "supportConversationForm") return createSupportConversation(form);
+    if (form.id === "supportChatForm") return sendSupportChatMessage(form);
+    if (form.id === "aiAdminSettingsForm") return saveAIAdminSettings(form);
+    if (form.id === "removeRoleForm") return removeRole(form);
   });
 
   document.addEventListener("input", event => {
     if (event.target.id === "catalogueSearch") renderCatalogue();
+    if (event.target.id === "adminUserFilter") {
+      const q=event.target.value.trim().toLowerCase();
+      document.querySelectorAll("#admin-section-0 tbody tr").forEach(row=>{row.hidden=!row.textContent.toLowerCase().includes(q);});
+    }
+  });
+  document.addEventListener("change", event => {
+    if(event.target.name === "profile-theme") { const prefs=readPrefs();prefs.theme=event.target.value;localStorage.setItem(prefsStorageKey(),JSON.stringify(prefs));applyTheme();toast(`${THEME_NAMES[prefs.theme]} theme applied.`); }
   });
 
   window.addEventListener("beforeinstallprompt",event=>{event.preventDefault();deferredInstallPrompt=event;});
   $("#authButton").addEventListener("click",()=>setAuthMode("login"));
   $("#signOutButton").addEventListener("click",signOut);
   $("#themeToggle").addEventListener("click",()=>{
-    const prefs=readPrefs();prefs.theme=prefs.theme==="dark"?"light":"dark";localStorage.setItem("onceupon-prefs",JSON.stringify(prefs));document.body.classList.toggle("theme-dark",prefs.theme==="dark");document.body.classList.toggle("theme-light",prefs.theme==="light");
+    const prefs=readPrefs(),idx=THEME_ORDER.indexOf(prefs.theme);prefs.theme=THEME_ORDER[(idx+1)%THEME_ORDER.length];localStorage.setItem(prefsStorageKey(),JSON.stringify(prefs));applyTheme();toast(`Theme: ${THEME_NAMES[prefs.theme]}`);
   });
   $("#year").textContent = new Date().getFullYear();
   const prefs = readPrefs();
@@ -784,18 +1152,21 @@
   document.body.classList.toggle("theme-light",prefs.theme==="light"||(prefs.theme==="system"&&window.matchMedia?.("(prefers-color-scheme: light)").matches));
   document.body.classList.toggle("high-contrast",prefs.contrast==="high");
   document.body.classList.toggle("reduce-motion",prefs.motion==="reduced");
+  applyTheme();
 
   if (!configured) {
     renderHome();
     main.insertAdjacentHTML("afterbegin",`<section class="page-wrap"><div class="notice danger-note"><strong>One setup step remains:</strong> open <code>config.js</code> and replace <code>PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY_HERE</code> with the project's publishable key. Never paste a service_role key here.</div></section>`);
   } else if (!window.supabase?.createClient) {
-    main.innerHTML = `<section class="page-wrap"><div class="notice danger-note">Supabase JavaScript did not load. Check your internet connection and try again.</div></section>`;
+    const cached=loadOfflineIdentity();
+    if(cached) startOfflineOnly(cached);
+    else { renderHome(); main.insertAdjacentHTML("afterbegin",`<section class="page-wrap"><div class="notice danger-note">The connection is unavailable and there is no saved offline account on this device. Connect to the internet and reopen OnceUpon before saving offline pages.</div></section>`); }
   } else {
     supa = window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
     supa.auth.getSession().then(({data,error})=>{
       if(error) console.error(error);
       session=data?.session||null;
-      if(session) refreshSessionData(); else { updateChrome(); renderHome(); }
+      if(session) refreshSessionData(); else { const cached=loadOfflineIdentity(); if(cached) startOfflineOnly(cached); else { updateChrome(); renderHome(); } }
     });
     supa.auth.onAuthStateChange((event,newSession)=>{
       session=newSession;

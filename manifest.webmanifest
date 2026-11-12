@@ -1,7 +1,7 @@
 {
   "name": "OnceUpon \u2014 Where every story finds its reader",
   "short_name": "OnceUpon",
-  "description": "A community library for readers and writers.",
+  "description": "A free community library for readers and writers, with optional offline reading.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

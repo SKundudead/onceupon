@@ -1,88 +1,60 @@
-# OnceUpon — Midnight Library release
+# OnceUpon v2 — Midnight Library and six-theme release
 
 **Tagline:** Where every story finds its reader.  
-**Design:** Midnight Library — charcoal, antique gold, warm ivory and literary serif typography.
+**Default design:** Midnight Library. Additional themes: Paper & Ink, Enchanted Forest, Midnight Blue, Lavender Dreams and Minimalist.
 
-This release builds on the existing OnceUpon static frontend and Supabase project. It preserves the original authentication, catalogue, reader, token wallet, author studio, quests and administration workflows, and adds the next set of requested features in one integrated package.
+This package extends the existing OnceUpon static frontend and Supabase project. It retains the current auth, catalogue, story reading, token wallet, author studio, author messaging, quest, moderation and publication workflows. The new database migration is additive; it does not delete or rewrite existing accounts, stories, token records or reading progress.
 
-## Included in this release
+## Included
 
-### Reader and public experience
-- Midnight Library theme as the default, with Warm Paper and device/system theme choices.
-- Responsive navigation, mobile layout, expanded footer, About, FAQ, user guide, privacy/community guidance, support contacts and PWA install prompt.
-- Public story catalogue and author directory with public author profile pages.
-- Dedicated notification centre and in-app toast alerts for newly published stories (polling while the app is open).
-- Reader preferences for font family, text size, line spacing, contrast and reduced motion.
+- Responsive layout with subtle animated atmosphere and reduced-motion support.
+- Clickable profile photo/name in the header; profile editing, photo upload/removal, account security and six themes in Profile & Settings.
+- Floating Ask AI and Contact Admin controls on the lower-right; token wallet dock on the lower-left.
+- Separate reader-to-author messages and private reader-to-admin support chat with automatic message refresh.
+- Expanded Administration view with approvals, author application review, story publication decisions, role tools, quest management/review, comment/review moderation, reports, analytics, catalogue export, support inbox and hosted-AI controls.
+- Local writing helper with optional hosted generative AI through a secured Supabase Edge Function.
+- PWA app-shell caching plus explicit offline downloads for pages the existing `get_story_page` RPC authorises. It never calls the page-unlock function and does not deduct tokens.
 
-### Profiles and privacy
-- Edit display name, phone, biography, Instagram URL and profile visibility.
-- Upload a JPG/PNG/WebP profile photo up to 5 MB to the existing private `profile-photos` bucket.
-- Change email through Supabase confirmation and update password through Supabase Auth.
-- Opt-in online presence. When disabled, the public author view does not expose last-seen information.
-- Public author profiles expose only selected public fields; email and phone are not included in the public author view.
+## Files to know
 
-### Author community
-- Follow and unfollow authors.
-- Reader-to-author conversations with message history and close/reopen controls.
-- No ordinary user-to-user private chat.
-- Author application and existing writing studio remain connected to the existing workflow.
+- `SUPPORT_AI_OFFLINE_UPGRADE.sql` — new additive migration for support conversations and AI settings/usage metadata.
+- `supabase/functions/onceupon-ai/index.ts` — hosted AI Edge Function; provider secrets stay server-side.
+- `UPGRADE_SETUP_GUIDE.md` — complete rollout, configuration and test checklist.
+- `IMPLEMENTATION_MIGRATION.sql` and `FINAL_SUPABASE_PATCH.sql` — existing migrations retained from the supplied archive. Do not rerun them blindly if already applied.
 
-### AI assistant
-- “Ask OnceUpon AI” includes a no-cost, browser-local helper for catalogue discovery, plot brainstorming, character development and writing feedback.
-- It does not call an external language model and does not send prompts to a third party. This is an honest free fallback, not a full generative AI integration.
+## Required setup before the new backend features work
 
-### Administration and recovery
-- Admin analytics for members, published/pending stories, author follows and author conversations.
-- Published catalogue CSV export.
-- Full database backup is intentionally directed to the export/backup method supported by your Supabase plan; automated backup availability depends on the plan. A browser-only frontend cannot safely produce a full database dump or restore the entire Supabase project. Private story pages, auth secrets and private files are never included in the CSV export.
-- Existing account, author, story, quest, moderation, report and support administration is retained.
+1. Take a Supabase backup/export before applying schema changes.
+2. Review and run `SUPPORT_AI_OFFLINE_UPGRADE.sql` once in the Supabase SQL Editor. It adds separate `support_conversations`, `support_chat_messages`, `ai_feature_settings` and `ai_usage_events` tables with RLS. It relies on the existing `public.has_admin_role()` helper.
+3. Deploy the Edge Function with `supabase functions deploy onceupon-ai`.
+4. Add these Edge Function secrets in Supabase: `AI_PROVIDER_API_KEY`, `AI_PROVIDER_BASE_URL` (HTTPS OpenAI-compatible chat-completions URL), `AI_PROVIDER_MODEL`. Optionally add `AI_ALLOWED_ORIGIN=https://onceupon-sk.netlify.app`.
+5. Select a provider/model whose free tier is available and acceptable at the time of configuration. Free quotas and models change; this project has no billing, paid fallback or automatic upgrade path.
+6. Sign in as Owner/Admin, open Administration → Hosted AI settings, and enable the feature only after verifying the Edge Function and secrets.
+7. Deploy the contents of this folder to the connected GitHub repository root / Netlify site.
 
-## Supabase setup — important
+## Offline reading
 
-The new profile, follow, author-conversation, public-author-view and publication-notification features require the included migration.
+A reader must be signed in and approved to download. On a story page choose **Download unlocked pages for offline**. The app calls the existing protected `get_story_page` RPC for each page; only page content that the backend returns is stored in IndexedDB. Locked or inaccessible pages are skipped. The download never calls `unlock_story_page`. Copies are stored on the current browser/device and account, not synced to other devices. They are not DRM-encrypted; keep the browser profile/device private. Use Offline downloads to remove saved copies.
 
-1. Open your Supabase project: `https://supabase.com/dashboard/project/trnsnbvvxgrscbcigpqe`.
-2. In **SQL Editor**, run `FINAL_SUPABASE_PATCH.sql` first if it has not already been applied.
-3. Run `IMPLEMENTATION_MIGRATION.sql` once. It adds the profile fields, RLS-protected follow and conversation tables, restricted public author view, private-photo read policy for opted-in public author avatars, and the publication-notification trigger.
-4. Confirm the `profile-photos` storage bucket exists and remains **private**, with a 5 MB limit and JPEG/PNG/WebP MIME types. Preserve the existing own-user-folder upload policies.
-5. Do not disable RLS. Do not add a service-role key to frontend files.
+## AI privacy and budget
 
-The migration is designed to be re-runnable. It does not assign an Owner role and does not change existing story or token data. It assumes the project's existing helper functions (`has_admin_role()` and `is_approved_reader()`) from the previously established schema are present.
+Hosted AI is off by default. It is called only when the user selects hosted AI and explicitly consents to send the prompt. The Edge Function verifies the Supabase session and account approval, applies per-user daily request and prompt-size limits, and records minimal metadata (user ID, model, status, character count and time)—not prompt text or model responses. AI does not use reading tokens. If the Edge Function/provider is not configured or available, the local helper remains available. Do not configure payment or a paid fallback.
 
-## Frontend configuration
+## Existing project settings and security
 
-Open `config.js` and replace `PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY_HERE` with the project's **publishable** key (or legacy anon key). Keep the existing Supabase URL. Never use a service-role key, secret key or database password in browser code.
+- `config.js` keeps the existing Supabase URL and publishable key. Never put a service-role key, database password or AI provider key in frontend files or GitHub.
+- Keep RLS enabled. Keep `profile-photos`, `quest-submissions` and `story-files` private; `story-covers` may remain public.
+- Keep existing Supabase Auth and Storage policies intact. The archive does not include the complete original base-schema bootstrap, and this package cannot verify the live database or storage policies.
+- Full database backup/restore must use Supabase-supported backup tools. Catalogue CSV is metadata only and intentionally excludes private story content and secrets.
+- No payments, subscriptions, paid tokens or paid AI upgrade features exist in this project.
 
-## Deploy
+## Test before launch
 
-1. Upload the contents of this folder to the root of `https://github.com/SKundudead/onceupon`.
-2. Keep the Netlify site connected to that repository and deploy the main branch with no build command and publish directory `.`.
-3. Open the deployed site, sign in and test the features below before announcing it publicly.
+Test login, profile photo change/removal, six themes, mobile navigation, all footer routes, reader progress, token claim/unlock, author messages, support chat from a separate test user/admin account, author approvals, story moderation, quests, AI local fallback, hosted AI only after server configuration, offline download of a free/unlocked page, blocked download of a locked page, and clearing an offline copy.
 
-## End-to-end test checklist
+**Not live-tested here:** Supabase migration execution, RLS policy compatibility, Edge Function deployment, provider free-tier availability, email delivery and Netlify production behaviour. Those require your Supabase/Netlify accounts and should be verified before public release.
 
-- Register, verify email and approve a test account.
-- Edit profile details, upload an avatar, change password and test email-change confirmation.
-- Enable and disable online visibility; verify that hidden presence is not shown publicly.
-- Assign author role, publish a public author profile and test follow/unfollow.
-- Start a reader-to-author conversation; reply as the author; close and reopen it.
-- Publish a story and verify a notification is inserted for approved readers and appears in the notification centre/toast while the app is open.
-- Test catalogue discovery, reading, first-five-pages-free behavior, page unlocks, bookmarks, lists, token claims and quests.
-- Test dark/light/system themes, font, spacing, contrast, reduced motion and PWA installation.
-- Verify admin analytics and catalogue CSV export.
 
-## Honest limitations
+## Unified inbox, username sign-in and notifications
 
-- This workspace cannot access your live Supabase dashboard or Netlify deployment, so database migration success, storage policies, email delivery, RLS behavior and production runtime have not been live-tested here.
-- The AI assistant is a local rules-based fallback, not a hosted LLM.
-- Publication and author-message notifications use database triggers, in-app notifications and periodic polling while the site is open. Browser push notifications while the app is closed are not configured.
-- Backup instructions and catalogue CSV export are included; full database backup/restore must be performed through Supabase's supported dashboard/backup facilities.
-- PWA installation availability depends on the browser and deployment being served over HTTPS.
-- No payments, subscriptions, paid APIs or service-role keys are included.
-
-## Security reminders
-
-- Keep RLS enabled on all Supabase tables.
-- Keep `profile-photos`, `quest-submissions` and `story-files` private; `story-covers` may remain public.
-- Public author profiles are exposed through the restricted `public_author_profiles` view, not by making the full `profiles` table public.
-- Do not share OTPs, passwords, API secrets or database credentials.
+The release includes one combined Messages inbox with `[ADMIN]` and `[AUTHOR]` labels, username-based sign-in (email remains available), and a notification centre with unread counts and mark-all-read. Username sign-in requires `USERNAME_SIGNIN_MIGRATION.sql` and deployment of `supabase/functions/username-signin`; see `UPGRADE_SETUP_GUIDE.md`.
